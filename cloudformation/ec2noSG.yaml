@@ -1,0 +1,61 @@
+# https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/parameters-section-structure.html 
+# https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/sample-templates-services-us-west-2.html#w2ab1c35c58c13c17
+# https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-ec2-instance.html Description:  Automation of 2 EC2 creations in us-east-1
+Parameters:
+  InstanceType:
+    Description: WebServer EC2 instance type
+    Type: String
+    Default: t2.micro
+  amiId:
+    Description: AMI for the 1st instance(default is latest AmaLinux2)
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
+  KeyName:
+    Type: 'AWS::EC2::KeyPair::KeyName'
+    Description: "Provide key name"
+  subnet1:
+    Type: 'AWS::EC2::Subnet::Id'
+    Description: "Subnet ID for the 1st EC2"
+  subnet2:
+    Type: 'AWS::EC2::Subnet::Id'
+    Description: "Subnet ID for the 2nd EC2"
+  vpcID:
+    Type: 'AWS::EC2::VPC::Id'
+    Description: "Default VPC ID"
+  SGID:
+    Type: 'AWS::EC2::SecurityGroup::Id'
+    Description: "SG ID"
+
+Resources:
+  Instance1:
+    Type: AWS::EC2::Instance
+    Properties:
+      KeyName: 
+        Ref: KeyName
+      InstanceType: 
+        Ref: InstanceType
+      ImageId: 
+        Ref: amiId
+      SubnetId: 
+        Ref: subnet1
+      SecurityGroupIds: 
+        - Ref: SGID
+      Tags:
+        - Key: Name
+          Value: Server1_usEast1a
+  Instance2:
+    Type: AWS::EC2::Instance
+    Properties:
+      KeyName: 
+        Ref: KeyName
+      InstanceType: 
+        Ref: InstanceType
+      ImageId: 
+        Ref: amiId
+      SubnetId: 
+        Ref: subnet2
+      SecurityGroupIds: 
+        - Ref: SGID
+      Tags:
+        - Key: Name
+          Value: Server2_usEast1b
