@@ -1,0 +1,177 @@
+  #############################################################################################
+  # Create a CloudFormation template for Windows AMI with Security Group which allows RDP and # 
+  # Linux AMI with another Security Group which allows SSH connection:                        #
+  # 1: export instance IDs and Security Group IDs from the template so that they can be used  #
+  #    for another stack creation.                                                            #
+  # 2: come up with user data for Linux instance that will install and start httpd service    #
+  #    which displays your full name on the website.                                          #
+  #############################################################################################
+
+#----------------------------Parameters ----------------------------------------------
+Parameters:
+  InstanceType:
+    Description: EC2 instance type
+    Type: String
+    Default: t2.micro
+  KeyName:
+    Type: 'AWS::EC2::KeyPair::KeyName'
+    Description: "Provide key name"
+  subnet1:
+    Type: 'AWS::EC2::Subnet::Id'
+    Description: "Subnet ID for the 1st EC2"
+  subnet2:
+    Type: 'AWS::EC2::Subnet::Id'
+    Description: "Subnet ID for the 2nd EC2"
+  vpcID:
+    Type: 'AWS::EC2::VPC::Id'
+    Description: "Default VPC ID"
+  SSHLocation:
+    Description: The IP address range that can be used to SSH to the EC2 instances
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 0.0.0.0/0
+    AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+
+# -----------------------Mapping for AMI and Regions------------------------------
+Mappings:
+  AWSRegion2AMI:
+    us-east-1:
+      LinuxHVM64: ami-047a51fa27710816e
+      Windows2012r2: ami-079fe16082fb837c5
+    us-east-2:
+      LinuxHVM64: ami-027cab9a7bf0155df
+      Windows2012r2: ami-0f5f950bd81ec96e0
+    us-west-1:
+      LinuxHVM64: ami-088c153f74339f34c
+      Windows2012r2: ami-0f1bd3e0f73a95b37
+    us-west-2:
+      LinuxHVM64: ami-01fee56b22f308154
+      Windows2012r2: ami-0d886083a2ac8d80c
+
+# -------------------------------Resources------------------------------------------
+Resources:
+# Instances for Linux and Windows
+  EC2Instance1:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType:
+        Ref: InstanceType
+      SecurityGroupIds:
+      - Ref: InstanceSecurityGroupLinux
+      KeyName:
+        Ref: KeyName
+      ImageId:
+        Fn::FindInMap:
+        - AWSRegion2AMI
+        - Ref: AWS::Region
+        - LinuxHVM64
+      SubnetId:
+        Ref: subnet1
+      Tags:
+        - Key: Name
+          Value: LinuxHVM64
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash -xe
+          sudo yum update -y
+          sudo yum install httpd -y
+          sudo systemctl start httpd
+          sudo systemctl enable httpd
+          sudo touch /var/www/html/index.html
+          sudo echo "Hello Mederbek" > /var/www/html/index.html 
+
+  EC2Instance2:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType:
+        Ref: InstanceType
+      SecurityGroupIds:
+      - Ref: InstanceSecurityGroupWin
+      KeyName:
+        Ref: KeyName
+      ImageId:
+        Fn::FindInMap:
+        - AWSRegion2AMI
+        - Ref: AWS::Region
+        - Windows2012r2
+      SubnetId:
+        Ref: subnet2
+      Tags:
+        - Key: Name
+          Value: Windows2012r2
+
+# Security Groups
+  InstanceSecurityGroupLinux:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable SSH access via port 22,80,443 for Linux Instance
+      VpcId: 
+        Ref: vpcID
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 
+            Ref: SSHLocation
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+  InstanceSecurityGroupWin:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable RDP access via port 22,80,443 for Windows Instance
+      VpcId: 
+        Ref: vpcID
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 3389
+          ToPort: 3389
+          CidrIp: 
+            Ref: SSHLocation
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+           
+# ---------------------------Outputs ---------------------------------
+Outputs:
+  InstanceIdLinux:
+    Description: Instance Id of the newly created Linux instance
+    Value:
+      Ref: EC2Instance1
+    Export:
+      Name:
+        Fn::Sub: "${AWS::StackName}-EC2Instance1"
+  InstanceIdWin:
+    Description: Instance Id of the newly created Linux instance
+    Value:
+      Ref: EC2Instance2
+    Export:
+      Name:
+        Fn::Sub: "${AWS::StackName}-EC2Instance2"
+  InstanceSecurityGroupWin:
+    Description: The security group ID to use for Windows2012r2 servers
+    Value:
+      Ref: InstanceSecurityGroupWin
+    Export:
+      Name:
+        Fn::Sub: "${AWS::StackName}-InstanceSecurityGroupWin"
+  InstanceSecurityGroupLinux:
+    Description: The security group ID to use for Linux servers
+    Value:
+      Ref: InstanceSecurityGroupLinux
+    Export:
+      Name:
+        Fn::Sub: "${AWS::StackName}-InstanceSecurityGroupLinux"
+  

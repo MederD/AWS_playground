@@ -28,9 +28,6 @@ Mappings:
   AWSInstanceType2Arch:
     t2.micro:
       Arch: HVM64
-  AWSInstanceType2NATArch:
-    t2.micro:
-      Arch: NATHVM64
   AWSRegionArch2AMI:
     us-east-1:
       HVM64: ami-047a51fa27710816e
@@ -65,8 +62,8 @@ Resources:
       GroupDescription: Enable SSH access via port 22
       SecurityGroupIngress:
       - IpProtocol: tcp
-        FromPort: '22'
-        ToPort: '22'
+        FromPort: 22
+        ToPort: 22
         CidrIp:
           Ref: SSHLocation
 Outputs:
