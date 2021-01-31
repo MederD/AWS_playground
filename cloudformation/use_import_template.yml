@@ -1,0 +1,65 @@
+# Using export outputs of VPC_template.
+
+Description:  Automation of 2 EC2 creations with export values from other CFN stack
+#-------------------PARAMETERS-------------------
+Parameters:
+  amiId:
+    Description: AMI for the 1st instance(default is latest AmaLinux2)
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
+
+  KeyName:
+    Type: 'AWS::EC2::KeyPair::KeyName'
+    Description: "SSH keypair name"
+
+#-------------------RESOURCES------------------
+Resources:
+  Instance1:
+    Type: AWS::EC2::Instance
+    Properties:
+      KeyName: !Ref KeyName
+      InstanceType: "t2.micro"
+      ImageId: !Ref amiId
+      SubnetId: !ImportValue Export-PublicSubnet1
+      SecurityGroupIds: 
+        - !Ref PublicInstanceSG
+      Tags:
+        - Key: Name
+          Value: BastionHost
+
+  Instance2:
+    Type: AWS::EC2::Instance
+    Properties:
+      KeyName: !Ref KeyName
+      InstanceType: "t2.micro"
+      ImageId: !Ref amiId
+      SubnetId: !ImportValue Export-PrivateSubnet1
+      SecurityGroupIds: 
+        - !Ref PrivateInstanceSG
+      Tags:
+        - Key: Name
+          Value: PrivateEC2Server
+
+  PublicInstanceSG:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      VpcId: !ImportValue VPC-Export
+      GroupDescription: SSH access for IPv4 and IPv6 
+      SecurityGroupIngress:
+        - Description: 'Inbound IPv4 SSH traffic'
+          IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: '0.0.0.0/0'
+
+  PrivateInstanceSG:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      VpcId: !ImportValue VPC-Export
+      GroupDescription: SSH access for IPv4 and IPv6 
+      SecurityGroupIngress:
+        - Description: 'Inbound IPv4 SSH traffic'
+          IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: '10.0.0.0/16'
