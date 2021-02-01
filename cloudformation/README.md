@@ -5,6 +5,7 @@
 3. [Linux and Windows AMI's with export output](https://github.com/MederD/AWS_playground/blob/main/cloudformation/windows_template.yml)     
 4. [VPC infrastracture automation with CFN](https://github.com/MederD/AWS_playground/blob/main/cloudformation/VPC_template.yml)   
 5. [Using export values to create EC2](https://github.com/MederD/AWS_playground/blob/main/cloudformation/use_import_template.yml)    
-6. [LAMP stack template in CFN](https://github.com/MederD/AWS_playground/blob/main/cloudformation/LampStackCfnTemplate.yaml) 
+6. [LAMP stack template in CFN](https://github.com/MederD/AWS_playground/blob/main/cloudformation/LampStackCfnTemplate.yaml)    
+7. [Wordpress template in CFN](https://github.com/MederD/AWS_playground/blob/main/cloudformation/Wordpress_template_CFN.yml)      
 
-[back to main page](https://github.com/MederD/AWS_playground)
+[back](https://github.com/MederD/AWS_playground)
