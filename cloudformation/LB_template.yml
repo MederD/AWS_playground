@@ -1,0 +1,192 @@
+Description:  Create 2 ec2 in different AZ with ALB facing internet.
+#--------------------------PARAMETERS---------------------
+Parameters:
+  amiId:
+    Description: AMI for the instances(default is latest AmaLinux2)
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
+  
+  Key:
+    Type: 'AWS::EC2::KeyPair::KeyName'
+    Description: "SSH keypair name"
+  
+  Subnet1:
+    Type: 'AWS::EC2::Subnet::Id'
+    Description: "Subnet ID for the 1st EC2"
+
+  Subnet2:
+    Type: 'AWS::EC2::Subnet::Id'
+    Description: "Subnet ID for the 2nd EC2"
+
+  Subnet3:
+    Type: 'AWS::EC2::Subnet::Id'
+    Description: "Subnet ID for the 3rd EC2"
+  
+  vpcID:
+    Type: 'AWS::EC2::VPC::Id'
+    Description: "Default VPC ID"
+
+  SSHLocation:
+    Description: The IP address range that can be used to SSH to the EC2 instances
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+
+#----------------------------RESOURCES-------------------------
+Resources:
+  Instance1:
+    Type: AWS::EC2::Instance
+    Properties:
+      KeyName: !Ref Key
+      InstanceType: "t2.micro"
+      ImageId: !Ref amiId
+      SubnetId: !Ref Subnet1
+      SecurityGroupIds: 
+        - !Ref CustomSG
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash -xe
+            yum install -y httpd
+            systemctl start httpd
+            systemctl enable httpd
+            touch /var/www/html/index.html
+            echo "hello world from ${Subnet1}, " >> /var/www/html/index.html 
+            curl checkip.amazonaws.com >> /var/www/html/index.html
+      Tags:
+        - Key: Name
+          Value: Server1
+
+  Instance2:
+    Type: AWS::EC2::Instance
+    Properties:
+      KeyName: !Ref Key
+      InstanceType: "t2.micro"
+      ImageId: !Ref amiId
+      SubnetId: !Ref Subnet2
+      SecurityGroupIds: 
+        - !Ref CustomSG
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash -xe
+            yum install -y httpd
+            systemctl start httpd
+            systemctl enable httpd
+            touch /var/www/html/index.html
+            echo "hello world from ${Subnet2}, " >> /var/www/html/index.html 
+            curl checkip.amazonaws.com >> /var/www/html/index.html
+      Tags:
+        - Key: Name
+          Value: Server2
+
+  Instance3:
+    Type: AWS::EC2::Instance
+    Properties:
+      KeyName: !Ref Key
+      InstanceType: "t2.micro"
+      ImageId: !Ref amiId
+      SubnetId: !Ref Subnet3
+      SecurityGroupIds: 
+        - !Ref CustomSG
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash -xe
+            yum install -y httpd
+            systemctl start httpd
+            systemctl enable httpd
+            touch /var/www/html/index.html
+            echo "hello world from ${Subnet3}, " >> /var/www/html/index.html 
+            curl checkip.amazonaws.com >> /var/www/html/index.html
+      Tags:
+        - Key: Name
+          Value: Server3
+
+  CustomSG: 
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      VpcId: !Ref vpcID
+      GroupDescription: SSH access for IPv4 and IPv6 
+      SecurityGroupIngress:
+        - Description: 'Inbound SSH traffic'
+          IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SSHLocation
+        - Description: 'Inbound from ALB Security group'
+          SourceSecurityGroupId: !Ref ALBSG
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          
+
+  ALBSG: 
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      VpcId: !Ref vpcID
+      GroupDescription: Access for IPv4 and IPv6 
+      SecurityGroupIngress:
+        - Description: 'Inbound IPv4 HTTP traffic'
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '0.0.0.0/0'
+        - Description: 'Inbound IPv4 HTTPS traffic'
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: '0.0.0.0/0'
+  
+  EC2TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 15
+      HealthyThresholdCount: 5
+      Matcher:
+        HttpCode: '200'
+      Name: EC2TargetGroup
+      Port: 80
+      Protocol: HTTP
+      TargetGroupAttributes:
+      - Key: deregistration_delay.timeout_seconds
+        Value: '20'
+      Targets:
+      - Id: !Ref Instance1
+        Port: 80
+      - Id: !Ref Instance2
+        Port: 80
+      - Id: !Ref Instance3
+        Port: 80
+      UnhealthyThresholdCount: 3
+      VpcId: !Ref vpcID
+      Tags:
+      - Key: Name
+        Value: EC2TargetGroup
+  
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing 
+      Subnets:
+      - Ref: Subnet1
+      - Ref: Subnet2
+      - Ref: Subnet3
+      SecurityGroups:
+      - Ref: ALBSG
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn:
+            Ref: EC2TargetGroup
+      LoadBalancerArn:
+        Ref: ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
