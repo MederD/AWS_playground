@@ -1,4 +1,4 @@
-Description:  Create 2 ec2 in different AZ with ALB facing internet.
+Description:  Create 3 instances in different AZ with ALB facing internet.
 #--------------------------PARAMETERS---------------------
 Parameters:
   amiId:
