@@ -7,6 +7,7 @@
 5. [Using export values to create EC2](https://github.com/MederD/AWS_playground/blob/main/cloudformation/use_import_template.yml)    
 6. [LAMP stack template in CFN](https://github.com/MederD/AWS_playground/blob/main/cloudformation/LampStackCfnTemplate.yaml)    
 7. [Wordpress template in CFN](https://github.com/MederD/AWS_playground/blob/main/cloudformation/Wordpress_template_CFN.yml)      
-8. [ALB template](https://github.com/MederD/AWS_playground/blob/main/cloudformation/LB_template.yml) 
+8. [ALB template](https://github.com/MederD/AWS_playground/blob/main/cloudformation/LB_template.yml)    
+9. [Path-based ALB routing](https://github.com/MederD/AWS_playground/blob/main/cloudformation/LB_template_multiple_TG.yml) 
 
 [back](https://github.com/MederD/AWS_playground)
