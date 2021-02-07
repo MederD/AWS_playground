@@ -1,0 +1,246 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  AWS CloudFormation Sample Template path-based ALB routing with ASG: Launch instances in
+  2 different target groups based on path-based policy.
+
+#--------------------------PARAMETERS------------------------------
+Parameters:
+
+  Key:
+    Type: 'AWS::EC2::KeyPair::KeyName'
+    Description: "SSH keypair name"
+
+  AmiId:
+    Description: AMI for the instances(default is latest AmaLinux2)
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
+  
+  Subnets:
+    Type: 'List<AWS::EC2::Subnet::Id>'
+    Description: The list of SubnetIds in your Virtual Private Cloud (VPC)
+
+  vpcID:
+    Type: 'AWS::EC2::VPC::Id'
+    Description: "Default VPC ID"
+  
+  InstanceType:
+    Description: Amazon EC2 instance type for the instances
+    Type: String
+    Default: t2.micro
+
+  SSHLocation:
+    Description: The IP address range that can be used to SSH to the EC2 instances
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+
+#---------------------------RESOURCES--------------------------------
+Resources:
+
+  InstanceSG: 
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      VpcId: !Ref vpcID
+      GroupDescription: SSH access for IPv4 and IPv6 
+      SecurityGroupIngress:
+        - Description: 'Inbound SSH traffic'
+          IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SSHLocation
+        - Description: 'Inbound from ALB Security group'
+          SourceSecurityGroupId: !Ref ALBSG
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+
+  myLaunchConfig1: 
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      ImageId: !Ref AmiId
+      SecurityGroups: 
+        - Ref: InstanceSG
+      InstanceType: 
+        Ref: "InstanceType"
+      KeyName: 
+        Ref: Key
+      UserData: !Base64 |
+        #!/bin/bash -xe
+          yum install -y httpd
+          systemctl start httpd
+          systemctl enable httpd
+          touch /var/www/html/index.html
+          echo "hello world" >> /var/www/html/index.html 
+          curl checkip.amazonaws.com >> /var/www/html/index.html
+
+  myLaunchConfig2: 
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      ImageId: !Ref AmiId
+      SecurityGroups: 
+        - Ref: InstanceSG
+      InstanceType: 
+        Ref: "InstanceType"
+      KeyName: 
+        Ref: Key
+      UserData: !Base64 |
+        #!/bin/bash -xe
+          yum install -y httpd
+          systemctl start httpd
+          systemctl enable httpd
+          mkdir /var/www/html/hello
+          touch /var/www/html/hello/index.html
+          echo "hello world" >> /var/www/html/hello/index.html 
+          curl checkip.amazonaws.com >> /var/www/html/hello/index.html
+
+  MyASG1:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: ASG1
+      VPCZoneIdentifier: !Ref Subnets
+      HealthCheckGracePeriod: 300
+      MinSize: '1'
+      MaxSize: '3'
+      DesiredCapacity: '2'
+      TargetGroupARNs:
+          - !Ref TargetGroup1
+      LaunchConfigurationName: !Ref myLaunchConfig1
+      Tags:
+        - Key: Name
+          Value: Server1
+          PropagateAtLaunch: true
+
+  MyASG2:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: ASG2
+      VPCZoneIdentifier: !Ref Subnets
+      HealthCheckGracePeriod: 300
+      MinSize: '1'
+      MaxSize: '3'
+      DesiredCapacity: '2'
+      TargetGroupARNs:
+          - !Ref TargetGroup2
+      LaunchConfigurationName: !Ref myLaunchConfig2
+      Tags:
+        - Key: Name
+          Value: Server2
+          PropagateAtLaunch: true
+
+  myCPUPolicy1:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref MyASG1
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: 50.0
+
+  myCPUPolicy2:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref MyASG2
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: 50.0
+        
+
+  ALBSG: 
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      VpcId: !Ref vpcID
+      GroupDescription: Access for IPv4 and IPv6 
+      SecurityGroupIngress:
+        - Description: 'Inbound IPv4 HTTP traffic'
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '0.0.0.0/0'
+        - Description: 'Inbound IPv4 HTTPS traffic'
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: '0.0.0.0/0'
+  
+  TargetGroup1:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      HealthCheckPath: "/"
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 3
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 5
+      VpcId: !Ref vpcID
+      Name: TargetGroup1
+      Tags:
+      - Key: Name
+        Value: TargetGroup1
+
+  TargetGroup2:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      HealthCheckPath: "/hello/index.html"
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 3
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 5
+      VpcId: !Ref vpcID
+      Name: TargetGroup2
+      Tags:
+      - Key: Name
+        Value: TargetGroup2
+
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing 
+      Subnets: !Ref Subnets
+      SecurityGroups:
+      - Ref: ALBSG
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn:
+            Ref: TargetGroup1
+      LoadBalancerArn:
+        Ref: ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+  ListenerRule1:
+    Type: 'AWS::ElasticLoadBalancingV2::ListenerRule'
+    Properties:
+      Actions:
+        - Type: forward
+          ForwardConfig:
+            TargetGroups:
+              - TargetGroupArn: !Ref TargetGroup2
+                Weight: 1
+      Conditions:
+        - Field: path-pattern
+          Values: 
+                  - /hello*
+      ListenerArn: !Ref ALBListener
+      Priority: 1
+  
+#-----------------------------------------OUTPUTS--------------------------
+Outputs:    
+
+    ALBDNS:
+        Description: The created loadbalancer
+        Value: !GetAtt  ApplicationLoadBalancer.DNSName
+        Export: 
+          Name: Export-ALB-DNSName
