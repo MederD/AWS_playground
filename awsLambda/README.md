@@ -1,4 +1,6 @@
-### Welcome to AWS Lambda playground page!   
+### Welcome to AWS Lambda playground page!    
+
+1. [Filter running instances by tag and stop](https://github.com/MederD/AWS_playground/blob/main/awsLambda/StopRunningEC2wTags.py)   
 
 
-[back to main page](https://github.com/MederD/AWS_playground)
+[back](https://github.com/MederD/AWS_playground)
