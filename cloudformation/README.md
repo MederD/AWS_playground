@@ -9,6 +9,7 @@
 7. [Wordpress template in CFN](https://github.com/MederD/AWS_playground/blob/main/cloudformation/Wordpress_template_CFN.yml)      
 8. [ALB template](https://github.com/MederD/AWS_playground/blob/main/cloudformation/LB_template.yml)    
 9. [Path-based ALB routing](https://github.com/MederD/AWS_playground/blob/main/cloudformation/LB_template_multiple_TG.yml)   
-10. [ASG with 2 TG behind ALB](https://github.com/MederD/AWS_playground/blob/main/cloudformation/CFN-ASG-ALB.yml) 
+10. [ASG with 2 TG behind ALB](https://github.com/MederD/AWS_playground/blob/main/cloudformation/CFN-ASG-ALB.yml)  
+11. [S3 static website replication and cloudfront](https://github.com/MederD/AWS_playground/blob/main/cloudformation/crossacnts3access.yml) 
 
 [back](https://github.com/MederD/AWS_playground)
