@@ -1,0 +1,175 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: Static Website S3 Bucket with replication and CloudFront
+
+#--------------------------------------PARAMETERS---------------------------
+Parameters:
+  SourceBucketName:
+    Type: String
+    Description: S3 bucket name
+  DestBucketName:
+    Type: String
+    Description: S3 bucket name of existing destinaton bucket
+  ObjectExpiration:
+    Type: Number
+    Description: S3 object lifecycle 
+  OwnerARN:
+    Type: String
+    Description: Owner ARN
+
+# -------------------------------------RESOURCES----------------------------
+Resources:
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    #DeletionPolicy : Retain
+    Properties:
+      AccessControl: PublicRead
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: error.html
+
+      BucketName: !Ref SourceBucketName
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          -
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 2
+            ExpirationInDays: !Ref ObjectExpiration
+            Status: Enabled
+      
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      Tags:
+        -
+          Key: Description
+          Value: S3Bucket for StaticWebsite
+
+      ReplicationConfiguration:
+        Role: !GetAtt
+          - WorkItemBucketBackupRole
+          - Arn
+        Rules:
+          - Destination:
+              Bucket:
+                !Sub "arn:aws:s3:::${DestBucketName}"
+              StorageClass: STANDARD
+            Id: Backup
+            Prefix: ''
+            Status: Enabled
+      VersioningConfiguration:
+        Status: Enabled
+  
+  WorkItemBucketBackupRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service:
+                - "s3.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+
+  S3BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3Bucket
+      PolicyDocument:
+        Statement:
+          -
+            Sid: OwnerAccountPersmissions
+            Action:
+              - s3:*
+            Effect: Allow
+            Principal:
+              AWS:
+                - !Ref OwnerARN
+            Resource:
+              - !Sub "arn:aws:s3:::${SourceBucketName}"
+              - !Sub "arn:aws:s3:::${SourceBucketName}/*"
+          -
+            Sid: Static Web
+            Action:
+              - s3:GetObject
+            Effect: Allow
+            Principal: "*"
+            Resource:
+              - !Sub "arn:aws:s3:::${SourceBucketName}"
+              - !Sub "arn:aws:s3:::${SourceBucketName}/*"
+
+  BucketBackupPolicy:
+    Type: 'AWS::IAM::Policy'
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action:
+              - 's3:GetReplicationConfiguration'
+              - 's3:ListBucket'
+            Effect: Allow
+            Resource:
+              - !Join
+                - ''
+                - - 'arn:aws:s3:::'
+                  - !Ref SourceBucketName
+          - Action:
+              - 's3:GetObjectVersion'
+              - 's3:GetObjectVersionAcl'
+            Effect: Allow
+            Resource:
+              - !Join
+                - ''
+                - - 'arn:aws:s3:::'
+                  - !Ref SourceBucketName
+                  - /*
+          - Action:
+              - 's3:ReplicateObject'
+              - 's3:ReplicateDelete'
+            Effect: Allow
+            Resource:
+              - !Join
+                - ''
+                - - 'arn:aws:s3:::'
+                  - !Join
+                    - '-'
+                    - - !Ref 'AWS::Region'
+                      - !Ref 'AWS::StackName'
+                      - !Ref DestBucketName
+                  - /*
+      PolicyName: BucketBackupPolicy
+      Roles:
+        - !Ref WorkItemBucketBackupRole
+
+  
+
+  myDistribution:
+    Type: 'AWS::CloudFront::Distribution'
+    Properties:
+      DistributionConfig:
+        Origins:
+          - DomainName: !Sub "${SourceBucketName}.s3.${AWS::Region}.amazonaws.com"
+            Id: myS3Origin
+            S3OriginConfig: {}
+        Enabled: true
+        DefaultCacheBehavior:
+          TargetOriginId: myS3Origin
+          ForwardedValues:
+            QueryString: false
+          ViewerProtocolPolicy: allow-all
+
+Outputs:
+
+  S3Bucket:
+    Value: !Ref S3Bucket
+    Description: S3 Bucket for object storage
+
