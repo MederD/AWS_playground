@@ -243,7 +243,7 @@ Resources:
         Type: AWS::Route53::RecordSet
         Properties:
             HostedZoneName: !Ref HostedZoneNameMain
-            Name: !Join ['', [!Ref 'AWS::Region', ., !Ref 'HostedZoneNameMain', .]]
+            Name: !Join ['', [!Ref 'AWS::Region', ., !Ref HostedZoneNameMain]]
             Type: CNAME
             TTL: 60
             ResourceRecords:
@@ -253,7 +253,7 @@ Resources:
         Type: AWS::Route53::RecordSet
         Properties:
             HostedZoneName: !Ref HostedZoneNameReplica
-            Name: !Join ['', [!Ref 'AWS::Region', ., !Ref 'HostedZoneNameReplica', .]]
+            Name: !Join ['', [!Ref 'AWS::Region', ., !Ref HostedZoneNameReplica]]
             Type: CNAME
             TTL: 60
             ResourceRecords:
