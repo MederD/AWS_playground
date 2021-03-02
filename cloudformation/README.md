@@ -11,6 +11,7 @@
 9. [Path-based ALB routing](https://github.com/MederD/AWS_playground/blob/main/cloudformation/LB_template_multiple_TG.yml)   
 10. [ASG with 2 TG behind ALB](https://github.com/MederD/AWS_playground/blob/main/cloudformation/CFN-ASG-ALB.yml)  
 11. [S3 static website replication and cloudfront](https://github.com/MederD/AWS_playground/blob/main/cloudformation/crossacnts3access.yml)   
-12. [Aurora CFN template with route53](https://github.com/MederD/AWS_playground/blob/main/cloudformation/aurora_db_cfn_template.yml) 
+12. [Aurora CFN template with route53](https://github.com/MederD/AWS_playground/blob/main/cloudformation/aurora_db_cfn_template.yml)   
+13. [Basic CFN stack for ansible lab](https://github.com/MederD/AWS_playground/blob/main/cloudformation/basic_ec2_stack_for_ansible_lab.yml) 
 
 [back](https://github.com/MederD/AWS_playground)
