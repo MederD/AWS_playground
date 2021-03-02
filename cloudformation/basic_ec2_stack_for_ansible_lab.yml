@@ -1,0 +1,182 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Create 3 ec2 instances, one of them will be parent node, other 2 child nodes.
+Once instances are running, ssh to each instance and set password for user ansibleadmin'
+
+Parameters:
+  KeyName:
+    Description: "Name of an existing EC2 KeyPair to enable SSH access to the instances"
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: "Key name"
+  
+  InstanceType:
+    Description: WebServer EC2 instance type
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+    - t2.micro
+    ConstraintDescription: must be a valid EC2 instance type.
+
+  SSHLocation:
+    Description: The IP address range that can be used to SSH to the EC2 instances
+    Type: String
+    AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+
+#---------------------------------------------------------------------------------
+Mappings:
+  AWSInstanceType2Arch:
+    t2.micro:
+      Arch: HVM64
+  AWSRegionArch2AMI:
+    us-east-1:
+      HVM64: ami-047a51fa27710816e
+
+#-------------------------------------------------------------------------------------------
+Resources:
+  EC2InstanceParent:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType:
+        Ref: InstanceType
+      SecurityGroups:
+      - Ref: InstanceParentSecurityGroup
+      KeyName:
+        Ref: KeyName
+      ImageId:
+        Fn::FindInMap:
+        - AWSRegionArch2AMI
+        - Ref: AWS::Region
+        - Fn::FindInMap:
+          - AWSInstanceType2Arch
+          - Ref: InstanceType
+          - Arch
+      Tags:
+        - Key: Name
+          Value: parent-node
+      UserData:
+        Fn::Base64:
+          |
+            #!/bin/bash -xe
+            yum update -y 
+            yum install https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm  -y
+            yum install ansible -y
+            hostnamectl set-hostname --static parent-node
+            echo "preserve_hostname: true" >> /etc/cloud/cloud.cfg
+            useradd ansibleadmin 
+            sudo sh -c "echo \"ansibleadmin ALL=(ALL) NOPASSWD: ALL\" >> /etc/sudoers"
+            sed -i 's|[#]*PasswordAuthentication yes|PasswordAuthentication yes|g' /etc/ssh/sshd_config
+            systemctl restart sshd
+            
+                        
+  InstanceParentSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable SSH access via port 22
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        CidrIp:
+          Ref: SSHLocation
+
+  EC2InstanceChild1:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType:
+        Ref: InstanceType
+      SecurityGroups:
+      - Ref: InstanceSecurityGroupChild
+      KeyName:
+        Ref: KeyName
+      ImageId:
+        Fn::FindInMap:
+        - AWSRegionArch2AMI
+        - Ref: AWS::Region
+        - Fn::FindInMap:
+          - AWSInstanceType2Arch
+          - Ref: InstanceType
+          - Arch
+      Tags:
+        - Key: Name
+          Value: child-1-web
+      UserData:
+        Fn::Base64:
+          |
+            #!/bin/bash -xe
+            hostnamectl set-hostname --static child-1-web
+            echo "preserve_hostname: true" >> /etc/cloud/cloud.cfg
+            useradd ansibleadmin
+            sudo sh -c "echo \"ansibleadmin ALL=(ALL) NOPASSWD: ALL\" >> /etc/sudoers"
+            sed -i 's|[#]*PasswordAuthentication yes|PasswordAuthentication yes|g' /etc/ssh/sshd_config
+            systemctl restart sshd
+
+  InstanceSecurityGroupChild:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable SSH access via port 22
+      SecurityGroupIngress:
+        - Description: 'Inbound from Parent Security group'
+          SourceSecurityGroupName: !Ref InstanceParentSecurityGroup
+          IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+  
+  EC2InstanceChild2:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType:
+        Ref: InstanceType
+      SecurityGroups:
+      - Ref: InstanceSecurityGroupChild
+      KeyName:
+        Ref: KeyName
+      ImageId:
+        Fn::FindInMap:
+        - AWSRegionArch2AMI
+        - Ref: AWS::Region
+        - Fn::FindInMap:
+          - AWSInstanceType2Arch
+          - Ref: InstanceType
+          - Arch
+      Tags:
+        - Key: Name
+          Value: child-2-db
+      UserData:
+        Fn::Base64:
+          |
+            #!/bin/bash -xe
+            hostnamectl set-hostname --static child-2-db
+            echo "preserve_hostname: true" >> /etc/cloud/cloud.cfg
+            useradd ansibleadmin
+            sudo sh -c "echo \"ansibleadmin ALL=(ALL) NOPASSWD: ALL\" >> /etc/sudoers"
+            sed -i 's|[#]*PasswordAuthentication yes|PasswordAuthentication yes|g' /etc/ssh/sshd_config
+            systemctl restart sshd
+ 
+#-----------------------------------------------------------------------------
+Outputs:
+  ParentInstanceId:
+    Description: InstanceId of the newly created parent EC2 instance
+    Value:
+      Ref: EC2InstanceParent
+  
+  PublicIPofParentNode:
+    Description: Public IP address of the newly created parent EC2 instance
+    Value:
+      Fn::GetAtt:
+      - EC2InstanceParent
+      - PublicIp
+  
+  PrivateIpChild1:
+    Description: Public IP address of the newly created child EC2 instance
+    Value:
+      Fn::GetAtt:
+      - EC2InstanceChild1
+      - PrivateIp
+
+  PrivateIpChild2:
+    Description: Public IP address of the newly created child EC2 instance
+    Value:
+      Fn::GetAtt:
+      - EC2InstanceChild2
+      - PrivateIp
