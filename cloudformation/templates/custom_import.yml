@@ -1,0 +1,93 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: CloudFormation exports
+
+Parameters:
+  KeyPairName:
+    Description: Default key Name
+    Type: AWS::EC2::KeyPair::KeyName
+
+Resources:
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      Policies:
+      - PolicyName: root
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - "logs:CreateLogGroup"
+            - "logs:CreateLogStream"
+            - "logs:PutLogEvents"
+            - "acm:DescribeCertificate"
+            - "acm:ListCertificates"
+            - "acm:GetCertificate"
+            - "acm:ListTagsForCertificate"
+            - "route53:Get*"
+            - "route53:List*"
+            - "route53:TestDNSAnswer"
+            Resource: "*"
+  getHostedZone: 
+    Type: "AWS::Lambda::Function"
+    DeletionPolicy: Delete
+    DependsOn:
+      - LambdaExecutionRole
+    Properties: 
+      Handler: "index.handler"
+      Role: 
+        Fn::GetAtt: 
+          - "LambdaExecutionRole"
+          - "Arn"
+      Runtime: "python3.7"
+      MemorySize: 128
+      Timeout: 100
+      Code: 
+        ZipFile: |
+          import boto3
+          import botocore
+          import cfnresponse
+          route53 = boto3.client('route53')
+          def handler(event, context):
+            response = route53.list_hosted_zones()
+            f=response['HostedZones']
+            for zone in f:
+                config=zone["Config"]
+                name=zone["Name"]
+                e=config["PrivateZone"]
+                if ('devops.corp' in name) and e:
+                    hostedZoneName=zone["Name"]
+            responseData = {}
+            responseData['hostedzonename'] = hostedZoneName
+            cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
+  hostedZoneInvocation:
+    Type: Custom::HostedZone
+    Properties:
+      ServiceToken: !GetAtt getHostedZone.Arn
+      Region: !Ref "AWS::Region"
+
+Outputs:
+  ExportsStackName:
+    Value: !Ref 'AWS::StackName'
+    Export:
+      Name: !Sub '${AWS::StackName}'
+  HostedZoneNameOutput: 
+    Value: !GetAtt hostedZoneInvocation.hostedzonename
+    Description: Return Value of private hosted zone name
+    Export: 
+      Name: !Sub 'hostedZoneName'
+  KeyName:
+    Value: !Ref KeyPairName
+    Description: Default Key Pair Name
+    Export:
+      Name: !Sub 'prod-ec2KeyPair'
