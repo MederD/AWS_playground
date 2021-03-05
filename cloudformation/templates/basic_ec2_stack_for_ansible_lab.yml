@@ -1,7 +1,7 @@
 ---
 AWSTemplateFormatVersion: '2010-09-09'
 Description: 'Create 3 ec2 instances, one of them will be parent node, other 2 child nodes.
-Once instances are running, ssh to each instance and set password for user ansibleadmin'
+a- ssh-keygen in parent node and ssh-copy-id to child nodes'
 
 Parameters:
   KeyName:
@@ -27,6 +27,14 @@ Parameters:
     Type: 'AWS::EC2::VPC::Id'
     Description: "Default VPC ID"
 
+  UserName:
+    Description: User for ansible engine and child nodes.
+    Type: String
+
+  UserPass:
+    Description: Password for user 
+    Type: String
+    
   #---------------------------------------------------------------------------------
 Mappings:
   AWSInstanceType2Arch:
@@ -38,16 +46,68 @@ Mappings:
 
 #-------------------------------------------------------------------------------------------
 Resources:
-  mySubnet:
-    Type: AWS::EC2::Subnet
+  # mySubnet:
+  #   Type: AWS::EC2::Subnet
+  #   Properties:
+  #     VpcId:
+  #       Ref: vpcID
+  #     CidrBlock: 172.31.96.0/20
+  #     MapPublicIpOnLaunch: false
+  #     Tags:
+  #     - Key: Name
+  #       Value: NoPublicIP
+  AnsibleEC2Role:
+    Type: 'AWS::IAM::Role'
     Properties:
-      VpcId:
-        Ref: vpcID
-      CidrBlock: 172.31.96.0/20
-      MapPublicIpOnLaunch: false
-      Tags:
-      - Key: Name
-        Value: PrivateSubnet
+      RoleName: AnsibleEc2Role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service:
+                - "ec2.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: "/"
+
+  DemoInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties: 
+      InstanceProfileName: demo-ec2-instance-profile
+      Path: "/"
+      Roles: 
+       - !Ref AnsibleEC2Role
+  
+  RolePolicies:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: EC2FullAccessPolicy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action: 
+            - 'ec2:*'
+            - 'elasticloadbalancing:*'
+            - 'cloudwatch:*'
+            - 'autoscaling:*'
+            - 'iam:CreateServiceLinkedRole'
+            Resource: '*'
+            # Condition:
+            #   StringEquals:
+            #     'iam:AWSServiceName':
+            #       - autoscaling.amazonaws.com
+            #       - ec2scheduled.amazonaws.com
+            #       - elasticloadbalancing.amazonaws.com
+            #       - spot.amazonaws.com
+            #       - spotfleet.amazonaws.com
+            #       - transitgateway.amazonaws.com
+
+      Roles:
+        - !Ref AnsibleEC2Role
+
 
   EC2InstanceParent:
     Type: AWS::EC2::Instance
@@ -56,6 +116,7 @@ Resources:
         Ref: InstanceType
       SecurityGroupIds:
         - Ref: InstanceParentSecurityGroup
+      IamInstanceProfile: !Ref DemoInstanceProfile
       KeyName:
         Ref: KeyName
       ImageId:
@@ -70,20 +131,45 @@ Resources:
         - Key: Name
           Value: parent-node
       UserData:
-        Fn::Base64:
-          |
-            #!/bin/bash -xe
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+            sudo su
             yum update -y 
             yum install https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm  -y
             yum install ansible -y
             hostnamectl set-hostname --static parent-node
             echo "preserve_hostname: true" >> /etc/cloud/cloud.cfg
-            useradd ansibleadmin 
-            sudo sh -c "echo \"ansibleadmin ALL=(ALL) NOPASSWD: ALL\" >> /etc/sudoers"
+            useradd ${UserName} 
+            sudo sh -c "echo \"${UserName} ALL=(ALL) NOPASSWD: ALL\" >> /etc/sudoers"
             sed -i 's|[#]*PasswordAuthentication yes|PasswordAuthentication yes|g' /etc/ssh/sshd_config
             systemctl restart sshd
+            su ${UserName}
+            echo "${UserPass}" | passwd --stdin ${UserName}
+            cd /home/${UserName}
+            mkdir ansible_dynamic
+            cd ansible_dynamic
+            sudo yum install -y git
+            git init 
+            git clone https://github.com/MederD/ansible_dynamic_aws.git
+            chmod +x /home/${UserName}/ansible_dynamic/ansible_dynamic_aws/ec2.py
+            chmod +x /home/${UserName}/ansible_dynamic/ansible_dynamic_aws/custominventory.py
+            python /home/${UserName}/ansible_dynamic/ansible_dynamic_aws/get-pip.py
+            export PATH=/home/${UserName}/.local/bin:$PATH
+            pip install boto
             
-                        
+
+            # wget https://raw.githubusercontent.com/ansible/ansible/stable-2.8/contrib/inventory/ec2.py
+            # wget https://raw.githubusercontent.com/ansible/ansible/stable-2.8/contrib/inventory/ec2.ini
+            # chmod +x /home/ansibleadmin/ec2.py
+            # sed -i 's|[#]*elasticache = False|elasticache = False|g' /home/ansibleadmin/ec2.ini
+            # sed -i 's|[#] vpc_destination_variable = private_ip_address|vpc_destination_variable = private_ip_address|g' /home/ansibleadmin/ec2.ini
+            # sed -i 's|vpc_destination_variable = ip_address|#vpc_destination_variable = ip_address|g' /home/ansibleadmin/ec2.ini
+            # sudo yum install python3 python3-pip -y
+            # sudo pip3 install --upgrade pip
+            # pip install boto3
+            # export PATH=/home/ansibleadmin/.local/bin:$PATH
+            
+
   InstanceParentSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -95,6 +181,14 @@ Resources:
         ToPort: 22
         CidrIp:
           Ref: SSHLocation
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 443
+        ToPort: 443
+        CidrIp: 0.0.0.0/0
 
   EC2InstanceChild1:
     Type: AWS::EC2::Instance
@@ -102,7 +196,7 @@ Resources:
       InstanceType:
         Ref: InstanceType
       SecurityGroupIds:
-        - Ref: InstanceSecurityGroupChild
+        - Ref: InstanceSecurityGroupChildWeb
       KeyName:
         Ref: KeyName
       ImageId:
@@ -115,38 +209,76 @@ Resources:
           - Arch
       Tags:
         - Key: Name
-          Value: child-1-web
-      SubnetId: !Ref mySubnet
+          Value: child-node
+        - Key: Environment
+          Value: web
+      # SubnetId: !Ref mySubnet
       UserData:
-        Fn::Base64:
-          |
-            #!/bin/bash -xe
-            hostnamectl set-hostname --static child-1-web
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+            hostnamectl set-hostname --static child-node
             echo "preserve_hostname: true" >> /etc/cloud/cloud.cfg
-            useradd ansibleadmin
-            sudo sh -c "echo \"ansibleadmin ALL=(ALL) NOPASSWD: ALL\" >> /etc/sudoers"
+            useradd ${UserName}
+            echo "${UserPass}" | passwd --stdin ${UserName}
+            sudo sh -c "echo \"${UserName} ALL=(ALL) NOPASSWD: ALL\" >> /etc/sudoers"
             sed -i 's|[#]*PasswordAuthentication yes|PasswordAuthentication yes|g' /etc/ssh/sshd_config
             systemctl restart sshd
 
-  InstanceSecurityGroupChild:
+  InstanceSecurityGroupChildWeb:
     Type: AWS::EC2::SecurityGroup
     Properties:
       VpcId: !Ref vpcID
       GroupDescription: Enable SSH access via port 22
       SecurityGroupIngress:
-        - Description: 'Inbound from Parent Security group'
-          SourceSecurityGroupId: !Ref InstanceParentSecurityGroup
-          IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-  
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        SourceSecurityGroupId: !Ref InstanceParentSecurityGroup
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        CidrIp:
+          Ref: SSHLocation
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        SourceSecurityGroupId: !Ref InstanceParentSecurityGroup
+      - IpProtocol: tcp
+        FromPort: 443
+        ToPort: 443
+        SourceSecurityGroupId: !Ref InstanceParentSecurityGroup
+
+  InstanceSecurityGroupChildDb:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref vpcID
+      GroupDescription: Enable SSH access via port 22
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        CidrIp:
+          Ref: SSHLocation
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        SourceSecurityGroupId: !Ref InstanceParentSecurityGroup
+      - IpProtocol: tcp
+        FromPort: 3306
+        ToPort: 3306
+        SourceSecurityGroupId: !Ref InstanceSecurityGroupChildWeb
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        SourceSecurityGroupId: !Ref InstanceParentSecurityGroup
+
   EC2InstanceChild2:
     Type: AWS::EC2::Instance
     Properties:
       InstanceType:
         Ref: InstanceType
       SecurityGroupIds:
-        - Ref: InstanceSecurityGroupChild
+        - Ref: InstanceSecurityGroupChildDb
       KeyName:
         Ref: KeyName
       ImageId:
@@ -159,25 +291,27 @@ Resources:
           - Arch
       Tags:
         - Key: Name
-          Value: child-2-db
-      SubnetId: !Ref mySubnet
+          Value: child-node
+        - Key: Environment
+          Value: db
+      # SubnetId: !Ref mySubnet
       UserData:
-        Fn::Base64:
-          |
-            #!/bin/bash -xe
-            hostnamectl set-hostname --static child-2-db
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+            hostnamectl set-hostname --static child-node
             echo "preserve_hostname: true" >> /etc/cloud/cloud.cfg
-            useradd ansibleadmin
-            sudo sh -c "echo \"ansibleadmin ALL=(ALL) NOPASSWD: ALL\" >> /etc/sudoers"
+            useradd ${UserName}
+            echo "${UserPass}" | passwd --stdin ${UserName}
+            sudo sh -c "echo \"${UserName} ALL=(ALL) NOPASSWD: ALL\" >> /etc/sudoers"
             sed -i 's|[#]*PasswordAuthentication yes|PasswordAuthentication yes|g' /etc/ssh/sshd_config
             systemctl restart sshd
  
 #-----------------------------------------------------------------------------
 Outputs:
-  ParentInstanceId:
-    Description: InstanceId of the newly created parent EC2 instance
-    Value:
-      Ref: EC2InstanceParent
+  # ParentInstanceId:
+  #   Description: InstanceId of the newly created parent EC2 instance
+  #   Value:
+  #     Ref: EC2InstanceParent
   
   PublicIPofParentNode:
     Description: Public IP address of the newly created parent EC2 instance
