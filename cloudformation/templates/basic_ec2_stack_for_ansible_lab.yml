@@ -1,7 +1,6 @@
 ---
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Create 3 ec2 instances, one of them will be parent node, other 2 child nodes.
-a- ssh-keygen in parent node and ssh-copy-id to child nodes'
+Description: 'Create 3 ec2 instances, one of them will be parent node, other 2 child nodes.'
 
 Parameters:
   KeyName:
@@ -133,18 +132,17 @@ Resources:
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash -xe
-            sudo su
-            yum update -y 
-            yum install https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm  -y
-            yum install ansible -y
+            sudo yum update -y 
+            sudo yum install https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm  -y
+            sudo yum install ansible -y
             hostnamectl set-hostname --static parent-node
             echo "preserve_hostname: true" >> /etc/cloud/cloud.cfg
-            useradd ${UserName} 
+            sudo useradd ${UserName} 
+            echo "${UserPass}" | passwd --stdin ${UserName}
             sudo sh -c "echo \"${UserName} ALL=(ALL) NOPASSWD: ALL\" >> /etc/sudoers"
             sed -i 's|[#]*PasswordAuthentication yes|PasswordAuthentication yes|g' /etc/ssh/sshd_config
-            systemctl restart sshd
+            sudo systemctl restart sshd
             su ${UserName}
-            echo "${UserPass}" | passwd --stdin ${UserName}
             cd /home/${UserName}
             mkdir ansible_dynamic
             cd ansible_dynamic
@@ -156,7 +154,13 @@ Resources:
             python /home/${UserName}/ansible_dynamic/ansible_dynamic_aws/get-pip.py
             export PATH=/home/${UserName}/.local/bin:$PATH
             pip install boto
-            
+            pip install boto3
+            ssh-keygen -q -t rsa -N '' <<< ""$'\n'"y" 2>&1 >/dev/null
+            ssh-copy-id ${EC2InstanceChild1.PrivateIp}
+            ssh-copy-id ${EC2InstanceChild2.PrivateIp}
+            ssh-copy-id ${UserName}@localhost
+            # echo ${EC2InstanceChild1.PrivateIp} > inventory
+            # echo ${EC2InstanceChild1.PrivateIp} > inventory
 
             # wget https://raw.githubusercontent.com/ansible/ansible/stable-2.8/contrib/inventory/ec2.py
             # wget https://raw.githubusercontent.com/ansible/ansible/stable-2.8/contrib/inventory/ec2.ini
@@ -218,7 +222,7 @@ Resources:
           #!/bin/bash -xe
             hostnamectl set-hostname --static child-node
             echo "preserve_hostname: true" >> /etc/cloud/cloud.cfg
-            useradd ${UserName}
+            sudo useradd ${UserName}
             echo "${UserPass}" | passwd --stdin ${UserName}
             sudo sh -c "echo \"${UserName} ALL=(ALL) NOPASSWD: ALL\" >> /etc/sudoers"
             sed -i 's|[#]*PasswordAuthentication yes|PasswordAuthentication yes|g' /etc/ssh/sshd_config
@@ -300,7 +304,7 @@ Resources:
           #!/bin/bash -xe
             hostnamectl set-hostname --static child-node
             echo "preserve_hostname: true" >> /etc/cloud/cloud.cfg
-            useradd ${UserName}
+            sudo useradd ${UserName}
             echo "${UserPass}" | passwd --stdin ${UserName}
             sudo sh -c "echo \"${UserName} ALL=(ALL) NOPASSWD: ALL\" >> /etc/sudoers"
             sed -i 's|[#]*PasswordAuthentication yes|PasswordAuthentication yes|g' /etc/ssh/sshd_config
