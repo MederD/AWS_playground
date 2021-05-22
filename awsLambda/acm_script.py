@@ -15,8 +15,8 @@ acm_client = boto3.client('acm')
 ses_client = boto3.client('ses')
 
 acm_list = []
-source_email = 'freenetscaper@yahoo.com'
-dest_email = 'mederbek@outlook.com'
+source_email = '<< enter SES verified source email'
+dest_email = '<< enter SES verified dest email'
 
 #------------------------------------
 def list_acm():
@@ -59,7 +59,7 @@ def describe_acm():
                                     'Data': 'Please renew your certificate, it will expire soon.',
                                     },
                                 'Html': {
-                                    'Data': 'Please renew your certificate'
+                                    'Data': 'Please renew your certificate, it will expire soon.'
                                     }
                                 }
                         },
