@@ -1,0 +1,69 @@
+import json
+import boto3
+from botocore.exceptions import ClientError
+import traceback
+
+client = boto3.client('cloudwatch')
+cloudwatch = boto3.resource('cloudwatch')
+
+Environment = ""
+Service = ""
+AccountNumber = ""
+CreatedBy = ""
+
+def lambda_handler(event, context):
+    try:
+        response = cloudwatch.get_available_subresources()
+        for resource in response:
+            if resource == 'Alarm':
+                response = client.describe_alarms()
+                for i in response['MetricAlarms']:
+                    ResourceArn = i['AlarmArn']
+                    AlarmName = i['AlarmName']
+                    response = client.list_tags_for_resource(ResourceARN = ResourceArn)
+                    tags = response['Tags']
+                    keys = [key for key in tags if key['Key'] == 'Name']
+                    if len(keys) == 0:
+                        response = client.tag_resource(
+                            ResourceARN = ResourceArn,
+                            Tags = [{'Key': 'Name', 'Value': AlarmName }]
+                        )
+                    keys = [key for key in tags if key['Key'] == 'Service']
+                    if len(keys) == 0:
+                        response = client.tag_resource(
+                            ResourceARN = ResourceArn,
+                            Tags = [{'Key': 'Service', 'Value': Service }]
+                        )
+                    keys = [key for key in tags if key['Key'] == 'AccountNumber']
+                    if len(keys) == 0:
+                        response = client.tag_resource(
+                            ResourceARN = ResourceArn,
+                            Tags = [{'Key': 'AccountNumber', 'Value': AccountNumber }]
+                        )
+                    keys = [key for key in tags if key['Key'] == 'CreatedBy']
+                    if len(keys) == 0:
+                        response = client.tag_resource(
+                            ResourceARN = ResourceArn,
+                            Tags = [{'Key': 'CreatedBy', 'Value': CreatedBy }]
+                        )
+                    keys = [key for key in tags if key['Key'] == 'Environment']
+                    if len(keys) == 0:
+                        response = client.tag_resource(
+                            ResourceARN = ResourceArn,
+                            Tags = [{'Key': 'Environment', 'Value': Environment }]
+                        )
+
+
+    except Exception as error:
+        response = client.tag_resource(
+            ResourceARN = ResourceArn,
+            Tags = [ {'Key': 'Name', 'Value': AlarmName }, 
+                     {'Key': 'CreatedBy', 'Value': CreatedBy}, 
+                     {'Key': 'Environment', 'Value': Environment},
+                     {'Key': 'AccountNumber', 'Value': AccountNumber},
+                     {'Key': 'Service', 'Value': Service} 
+            ])
+    return {
+        'statusCode': 200,
+        'body': json.dumps('Hello from Lambda!')
+    }
