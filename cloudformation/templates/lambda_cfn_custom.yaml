@@ -1,0 +1,217 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Create lambda functions for EC2 resources, event rule to trigger these lambdas and tag the event rule.
+
+Parameters:
+  ExistingLambdaRole:
+    Type: String
+    Description: 'ARN of the existing lambda role'
+  S3BucketParam:
+    Type: String
+    Description: 'Location of lambda functions' 
+  S3KeyParamDhcp:
+    Type: String
+    Description: 'Key for Dhcp lambda function'
+  S3KeyParamEIP:
+    Type: String
+    Description: 'Key for EIP lambda function'
+  S3KeyParamImages:
+    Type: String
+    Description: 'Key for Images lambda function'
+  S3KeyParamInstance:
+    Type: String
+    Description: 'Key for Instance lambda function'
+
+Resources:
+  DhcpOptionsPutTags:
+    Type: AWS::Lambda::Function
+    Properties: 
+      Description: Function to tag DhcpOptions
+      Handler: dhcp_put_tags.lambda_handler
+      Role: !Ref ExistingLambdaRole
+      Runtime: "python3.9"
+      Code:
+        S3Bucket: !Ref S3BucketParam
+        S3Key: !Ref S3KeyParamDhcp
+      Timeout: 30
+      Tags: 
+        - Key: "Name"
+          Value: "DhcpOptionsPutTags"
+        - Key: "CreatedBy"
+          Value: "Med"
+
+  EIPPutTags:
+    Type: AWS::Lambda::Function
+    Properties: 
+      Description: Function to tag EIP
+      Handler: eip_put_tags.lambda_handler
+      Role: !Ref ExistingLambdaRole
+      Runtime: "python3.9"
+      Code:
+        S3Bucket: !Ref S3BucketParam
+        S3Key: !Ref S3KeyParamEIP
+      Timeout: 30
+      Tags: 
+        - Key: "Name"
+          Value: "EIPPutTags"
+        - Key: "CreatedBy"
+          Value: "Med"
+  
+  ImagesPutTags:
+    Type: AWS::Lambda::Function
+    Properties: 
+      Description: Function to tag Images
+      Handler: images_put_tags.lambda_handler
+      Role: !Ref ExistingLambdaRole
+      Runtime: "python3.9"
+      Code:
+        S3Bucket: !Ref S3BucketParam
+        S3Key: !Ref S3KeyParamImages
+      Timeout: 30
+      Tags: 
+        - Key: "Name"
+          Value: "ImagesPutTags"
+        - Key: "CreatedBy"
+          Value: "Med"
+  
+  InstancePutTags:
+    Type: AWS::Lambda::Function
+    Properties: 
+      Description: Function to tag Instances
+      Handler: instance_put_tags.lambda_handler
+      Role: !Ref ExistingLambdaRole
+      Runtime: "python3.9"
+      Code:
+        S3Bucket: !Ref S3BucketParam
+        S3Key: !Ref S3KeyParamInstance
+      Timeout: 30
+      Tags: 
+        - Key: "Name"
+          Value: "InstancePutTags"
+        - Key: "CreatedBy"
+          Value: "Med"
+
+  EventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: "Event Rule to trigger EC2 resource tagging lambdas"
+      EventPattern:
+        source:
+          - "aws.config"
+        detail-type:
+          - "Config Configuration Item Change"
+        detail:
+          configurationItem:
+            resourceType:
+              - "AWS::EC2::Instance"
+              - "AWS::EC2::Image"
+              - "AWS::EC2::DHCPOptions"
+              - "AWS::EC2::EIP"
+      State: "ENABLED"
+      Targets:
+        - 
+          Arn:
+            Fn::GetAtt:
+              - "DhcpOptionsPutTags"
+              - "Arn"
+          Id: "DhcpOptionsPutTags"
+        - 
+          Arn:
+            Fn::GetAtt:
+              - "EIPPutTags"
+              - "Arn"
+          Id: "EIPPutTags"
+        - 
+          Arn:
+            Fn::GetAtt:
+              - "ImagesPutTags"
+              - "Arn"
+          Id: "ImagesPutTags"
+        - 
+          Arn:
+            Fn::GetAtt:
+              - "InstancePutTags"
+              - "Arn"
+          Id: "InstancePutTags"
+  
+  PermissionForEventsToInvokeLambda: 
+    Type: AWS::Lambda::Permission
+    Properties: 
+      FunctionName: 
+        Ref: "DhcpOptionsPutTags"
+        Ref: "EIPPutTags"
+        Ref: "ImagesPutTags"
+        Ref: "InstancePutTags"
+      Action: "lambda:InvokeFunction"
+      Principal: "events.amazonaws.com"
+      SourceArn: 
+        Fn::GetAtt: 
+          - "EventRule"
+          - "Arn"
+
+  CustomTagEvent:
+    Type: Custom::TagEventRule
+    Version: "1.0"
+    DependsOn: EventRule
+    Properties:
+      ServiceToken: !GetAtt CustomFunction.Arn
+      ResourceARN: 
+        Fn::GetAtt:
+          - "EventRule"
+          - "Arn"
+      Tags: 
+        - Key: "Name"
+          Value: "EventRule"
+        - Key: "CreatedBy"
+          Value: "Med"
+
+  CustomFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !Ref ExistingLambdaRole
+      Runtime: "python3.9"
+      Timeout: 100
+      Code:
+        ZipFile: |
+          import boto3
+          import botocore
+          from botocore.exceptions import ClientError
+          import cfnresponse
+          import json
+          client = boto3.client("events")
+          def handler(event, context):
+            ResourceARN = event['ResourceProperties']['ResourceARN']
+            tags = event['ResourceProperties']['Tags']
+            if event['RequestType'] == 'Create':
+              response = client.tag_resource(
+                ResourceARN = ResourceARN,
+                Tags = tags
+              )
+              response = 'SUCCESS'
+              responseData = {}
+              responseData['Data'] = response
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, "CustomResourcePhysicalID")
+            
+            if event['RequestType'] == 'Update':
+              response = 'SUCCESS'
+              responseData = {}
+              responseData['Data'] = response
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, "CustomResourcePhysicalID")
+
+            if event['RequestType'] == 'Delete':
+              for i in tags:
+                response = client.untag_resource(
+                  ResourceARN = ResourceARN,
+                  TagKeys = i['Key']
+                )
+                response = 'SUCCESS'
+                responseData = {}
+                responseData['Data'] = response
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, "CustomResourcePhysicalID")
+
+Outputs:
+  ExportsStackName:
+    Value: !Ref 'AWS::StackName'
+    Export:
+      Name: !Sub '${AWS::StackName}'
+
