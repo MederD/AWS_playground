@@ -202,7 +202,7 @@ Resources:
               for i in tags:
                 response = client.untag_resource(
                   ResourceARN = ResourceARN,
-                  TagKeys = i['Key']
+                  TagKeys = [i['Key']]
                 )
                 response = 'SUCCESS'
                 responseData = {}
