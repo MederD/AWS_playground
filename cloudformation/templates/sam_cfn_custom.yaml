@@ -1,0 +1,359 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Create lambda functions for EC2 resources, EventRule, SNS, Custom Resource to tag EventRule
+
+Parameters:
+  ExistingLambdaRole:
+    Type: String
+    Default: ""
+    Description: 'ARN of the existing lambda role'
+  TopicName:
+    Type: String
+    Default: ""
+    Description: 'Name of the SNS Topic, which is the event rule target'
+  EventRuleName:
+    Type: String
+    Default: ""
+    Description: 'Name of the Event Rule'
+  S3BucketParam:
+    Type: String
+    Default: ""
+    Description: 'Location of lambda functions' 
+  S3KeyParamDhcp:
+    Type: String
+    Default: ""
+    Description: 'Key for Dhcp lambda function'
+  S3KeyParamEIP:
+    Type: String
+    Default: ""
+    Description: 'Key for EIP lambda function'
+  S3KeyParamImages:
+    Type: String
+    Default: ""
+    Description: 'Key for Images lambda function'
+  S3KeyParamInstance:
+    Type: String
+    Default: ""
+    Description: 'Key for Instance lambda function'
+  S3KeyParamIGWandNACL:
+    Type: String
+    Default: ""
+    Description: 'Key for IGW and Nacl lambda function'
+  S3KeyParamNGW:
+    Type: String
+    Default: ""
+    Description: 'Key for NAT Gateway lambda function'
+  Environment:
+    Type: String
+    AllowedValues:
+    - Dev
+    - Test
+    - Prod
+    Description: Enter Environment value
+  Service:
+    Type: String
+    Default: ""
+    Description: Enter the service name for applications.
+  CreatedBy:
+    Type: String
+    Default: ""
+    Description: Enter creator name
+  AccountNumber:
+    Type: String
+    AllowedValues:
+    - ""
+    - ""
+    - ""
+    Default: ""
+    Description: Enter AccountNumber
+
+Resources:
+  NGWPutTags:
+    Type: AWS::Serverless::Function
+    Properties: 
+      Description: Function to tag NAT Gateways
+      FunctionName: !Select [0, !Split [".", !Ref S3KeyParamNGW]]
+      Handler: !Join
+      - '.'
+      - -  !Select [0, !Split [".", !Ref S3KeyParamNGW]]
+        -  lambda_handler
+      Role: !Ref ExistingLambdaRole
+      Runtime: "python3.9"
+      CodeUri:
+        Bucket: !Ref S3BucketParam
+        Key: !Ref S3KeyParamNGW
+      Timeout: 30
+      Events:
+        SNSEvent:
+          Type: SNS
+          Properties:
+            Topic: !Ref EventsTopic
+      Tags: 
+        Name: !Select [0, !Split [".", !Ref S3KeyParamNGW]]
+        CreatedBy: !Ref CreatedBy
+        AccountNumber: !Ref AccountNumber
+        Service: !Ref Service
+        Environment: !Ref Environment
+
+  DhcpOptionsPutTags:
+    Type: AWS::Serverless::Function
+    Properties: 
+      Description: Function to tag DhcpOptions
+      FunctionName: !Select [0, !Split [".", !Ref S3KeyParamDhcp]]
+      Handler: !Join
+      - '.'
+      - -  !Select [0, !Split [".", !Ref S3KeyParamDhcp]]
+        -  lambda_handler
+      Role: !Ref ExistingLambdaRole
+      Runtime: "python3.9"
+      CodeUri:
+        Bucket: !Ref S3BucketParam
+        Key: !Ref S3KeyParamDhcp
+      Timeout: 30
+      Events:
+        SNSEvent:
+          Type: SNS
+          Properties:
+            Topic: !Ref EventsTopic
+      Tags: 
+        Name: !Select [0, !Split [".", !Ref S3KeyParamDhcp]]
+        CreatedBy: !Ref CreatedBy
+        AccountNumber: !Ref AccountNumber
+        Service: !Ref Service
+        Environment: !Ref Environment
+
+  EIPPutTags:
+    Type: AWS::Serverless::Function
+    Properties: 
+      Description: Function to tag EIP
+      FunctionName: !Select [0, !Split [".", !Ref S3KeyParamEIP]]
+      Handler: !Join
+      - '.'
+      - -  !Select [0, !Split [".", !Ref S3KeyParamEIP]]
+        -  lambda_handler
+      Role: !Ref ExistingLambdaRole
+      Runtime: "python3.9"
+      CodeUri:
+        Bucket: !Ref S3BucketParam
+        Key: !Ref S3KeyParamEIP
+      Timeout: 30
+      Events:
+        SNSEvent:
+          Type: SNS
+          Properties:
+            Topic: !Ref EventsTopic
+      Tags: 
+        Name: !Select [0, !Split [".", !Ref S3KeyParamEIP]]
+        CreatedBy: !Ref CreatedBy
+        AccountNumber: !Ref AccountNumber
+        Service: !Ref Service
+        Environment: !Ref Environment
+  
+  ImagesPutTags:
+    Type: AWS::Serverless::Function
+    Properties: 
+      Description: Function to tag Images
+      FunctionName: !Select [0, !Split [".", !Ref S3KeyParamImages]]
+      Handler: !Join
+      - '.'
+      - -  !Select [0, !Split [".", !Ref S3KeyParamImages]]
+        -  lambda_handler
+      Role: !Ref ExistingLambdaRole
+      Runtime: "python3.9"
+      CodeUri:
+        Bucket: !Ref S3BucketParam
+        Key: !Ref S3KeyParamImages
+      Timeout: 30
+      Events:
+        SNSEvent:
+          Type: SNS
+          Properties:
+            Topic: !Ref EventsTopic
+      Tags: 
+        Name: !Select [0, !Split [".", !Ref S3KeyParamImages]]
+        CreatedBy: !Ref CreatedBy
+        AccountNumber: !Ref AccountNumber
+        Service: !Ref Service
+        Environment: !Ref Environment
+  
+  InstancePutTags:
+    Type: AWS::Serverless::Function
+    Properties: 
+      Description: Function to tag Instances
+      FunctionName: !Select [0, !Split [".", !Ref S3KeyParamInstance]]
+      Handler: !Join
+      - '.'
+      - -  !Select [0, !Split [".", !Ref S3KeyParamInstance]]
+        -  lambda_handler
+      Role: !Ref ExistingLambdaRole
+      Runtime: "python3.9"
+      CodeUri:
+        Bucket: !Ref S3BucketParam
+        Key: !Ref S3KeyParamInstance
+      Timeout: 30
+      Events:
+        SNSEvent:
+          Type: SNS
+          Properties:
+            Topic: !Ref EventsTopic
+      Tags: 
+        Name: !Select [0, !Split [".", !Ref S3KeyParamInstance]]
+        CreatedBy: !Ref CreatedBy
+        AccountNumber: !Ref AccountNumber
+        Service: !Ref Service
+        Environment: !Ref Environment
+
+  IGWandNaclPutTags:
+    Type: AWS::Serverless::Function
+    Properties: 
+      Description: Function to tag IGW and NACL
+      FunctionName: !Select [0, !Split [".", !Ref S3KeyParamIGWandNACL]]
+      Handler: !Join
+      - '.'
+      - -  !Select [0, !Split [".", !Ref S3KeyParamIGWandNACL]]
+        -  lambda_handler
+      Role: !Ref ExistingLambdaRole
+      Runtime: "python3.9"
+      CodeUri:
+        Bucket: !Ref S3BucketParam
+        Key: !Ref S3KeyParamIGWandNACL
+      Timeout: 60
+      Events:
+        SNSEvent:
+          Type: SNS
+          Properties:
+            Topic: !Ref EventsTopic
+      Tags: 
+        Name: !Select [0, !Split [".", !Ref S3KeyParamIGWandNACL]]
+        CreatedBy: !Ref CreatedBy
+        AccountNumber: !Ref AccountNumber
+        Service: !Ref Service
+        Environment: !Ref Environment
+
+  EventsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: !Ref TopicName
+      TopicName: !Ref TopicName
+      Tags: 
+        - Key: "Name"
+          Value: !Ref TopicName
+        - Key: "CreatedBy"
+          Value: !Ref CreatedBy
+        - Key: "AccountNumber"
+          Value: !Ref AccountNumber
+        - Key: "Service"
+          Value: !Ref Service
+        - Key: "Environment"
+          Value: !Ref Environment
+
+  EventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Ref EventRuleName
+      Description: "Event Rule to trigger EC2 resource tagging lambdas"
+      EventPattern:
+        source:
+          - "aws.config"
+        detail-type:
+          - "Config Configuration Item Change"
+        detail:
+          configurationItem:
+            resourceType:
+              - "AWS::EC2::Instance"
+              - "AWS::EC2::Image"
+              - "AWS::EC2::DHCPOptions"
+              - "AWS::EC2::EIP"
+              - "AWS::EC2::InternetGateway"
+              - "AWS::EC2::NetworkAcl"
+              - "AWS::EC2::NatGateway"
+      State: "ENABLED"
+      Targets:
+        - Arn: !Ref EventsTopic
+          Id: "EventsTopic"
+
+  PermissionForEventsToInvokeLambda: 
+    Type: AWS::Lambda::Permission
+    Properties: 
+      FunctionName: 
+        Ref: "DhcpOptionsPutTags"
+        Ref: "EIPPutTags"
+        Ref: "ImagesPutTags"
+        Ref: "InstancePutTags"
+        Ref: "IGWandNaclPutTags"
+        Ref: "NGWPutTags"
+      Action: "lambda:InvokeFunction"
+      Principal: "sns.amazonaws.com"
+      SourceArn: 
+        Ref: "EventsTopic"
+          
+  CustomTagEvent:
+    Type: Custom::TagEventRule
+    Version: "1.0"
+    DependsOn: EventRule
+    Properties:
+      ServiceToken: !GetAtt CustomFunction.Arn
+      ResourceARN: 
+        Fn::GetAtt:
+          - "EventRule"
+          - "Arn"
+      Tags: 
+        - Key: "Name"
+          Value: !Ref EventRuleName
+        - Key: "CreatedBy"
+          Value: !Ref CreatedBy
+        - Key: "AccountNumber"
+          Value: !Ref AccountNumber
+        - Key: "Service"
+          Value: !Ref Service
+        - Key: "Environment"
+          Value: !Ref Environment
+        
+  CustomFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: "Custom function to tag event rule"
+      Handler: index.handler
+      Role: !Ref ExistingLambdaRole
+      Runtime: "python3.9"
+      Timeout: 100
+      Code:
+        ZipFile: |
+          import boto3
+          import botocore
+          import cfnresponse
+          
+          client = boto3.client("events")
+
+          def handler(event, context):
+            ResourceARN = event['ResourceProperties']['ResourceARN']
+            tags = event['ResourceProperties']['Tags']
+            if event['RequestType'] == 'Create':
+              response = client.tag_resource(
+                ResourceARN = ResourceARN,
+                Tags = tags
+              )
+              response = 'SUCCESS'
+              responseData = {}
+              responseData['Data'] = response
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, "CustomResourcePhysicalID")
+            
+            if event['RequestType'] == 'Update':
+              response = 'SUCCESS'
+              responseData = {}
+              responseData['Data'] = response
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, "CustomResourcePhysicalID")
+
+            if event['RequestType'] == 'Delete':
+              for i in tags:
+                response = client.untag_resource(
+                  ResourceARN = ResourceARN,
+                  TagKeys = [i['Key']]
+                )
+                response = 'SUCCESS'
+                responseData = {}
+                responseData['Data'] = response
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, "CustomResourcePhysicalID")
+
+
+
