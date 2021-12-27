@@ -1,0 +1,195 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Create lambda functions to tag ECS, EventRule to trigger function, IAM policy for the lambda and custom resources.
+
+Parameters:
+  ExistingLambdaRole:
+    Type: String
+    Default: ""
+    Description: 'ARN of the existing lambda role'
+  EventRuleName:
+    Type: String
+    Default: ""
+    Description: 'Name of the Event Rule'
+  Environment:
+    Type: String
+    AllowedValues:
+    - Dev
+    - Test
+    - Prod
+    Default: ""
+    Description: Enter Environment value
+  Service:
+    Type: String
+    Default: ""
+    Description: Enter the service name for applications.
+  CreatedBy:
+    Type: String
+    Default: ""
+    Description: Enter creator name
+  AccountNumber:
+    Type: String
+    AllowedValues:
+    - ""
+    - ""
+    - ""
+    Default: ""
+    Description: Enter AccountNumber
+  S3BucketParam:
+    Type: String
+    Default: ""
+    Description: 'Location of lambda functions' 
+  S3KeyParamECS:
+    Type: String
+    Default: ""
+    Description: 'Key for ECS lambda function'
+  
+Resources:
+  ECSPutTagsFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: ECSTaggingPolicy
+    Properties: 
+      Description: Function to tag ECS
+      FunctionName: !Select [0, !Split [".", !Ref S3KeyParamECS]]
+      Handler: !Join
+      - '.'
+      - -  !Select [0, !Split [".", !Ref S3KeyParamECS]]
+        -  lambda_handler
+      Role: !Ref ExistingLambdaRole
+      Runtime: "python3.9"
+      CodeUri:
+        Bucket: !Ref S3BucketParam
+        Key: !Ref S3KeyParamECS
+      Timeout: 60
+      Environment:
+        Variables:
+          Environment: !Ref Environment
+          Service: !Ref Service
+          AccountNumber: !Ref AccountNumber
+          CreatedBy: !Ref CreatedBy
+      Tags: 
+        Name: !Select [0, !Split [".", !Ref S3KeyParamECS]]
+        CreatedBy: !Ref CreatedBy
+        AccountNumber: !Ref AccountNumber
+        Service: !Ref Service
+        Environment: !Ref Environment
+  
+  ECSTaggingPolicy:
+    Type: 'AWS::IAM::Policy'
+    Properties:
+      PolicyName: ECSTagging
+      Roles: 
+        - !Select [1, !Split ["/", !Ref ExistingLambdaRole]]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: 
+              - 'ecs:DescribeClusters'
+              - 'ecs:DescribeTaskDefinition'
+              - 'ecs:ListTagsForResource'
+              - 'ecs:ListClusters'
+              - 'ecs:ListTaskDefinitions'
+              - 'ecs:TagResource'
+              - 'ecs:UntagResource'
+            Resource: '*'
+
+  EventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Ref EventRuleName
+      Description: "Event Rule to trigger ECS resource tagging lambdas"
+      EventPattern:
+        source:
+          - "aws.config"
+        detail-type:
+          - "Config Configuration Item Change"
+        detail:
+          configurationItem:
+            resourceType:
+              - "AWS::ECS::Cluster"
+              - "AWS::EC2::TaskDefinition"
+      State: "ENABLED"
+      Targets:
+        - Arn: !GetAtt ECSPutTagsFunction.Arn
+          Id: "ECSLambda"
+
+  PermissionForEventsToInvokeLambda: 
+    Type: AWS::Lambda::Permission
+    Properties: 
+      FunctionName: 
+        Ref: "ECSPutTagsFunction"
+      Action: "lambda:InvokeFunction"
+      Principal: "events.amazonaws.com"
+      SourceArn: !GetAtt EventRule.Arn
+          
+  CustomTagEvent:
+    Type: Custom::TagEventRule
+    Version: "1.0"
+    DependsOn: EventRule
+    Properties:
+      ServiceToken: !GetAtt CustomFunction.Arn
+      ResourceARN: 
+        Fn::GetAtt:
+          - "EventRule"
+          - "Arn"
+      Tags: 
+        - Key: "Name"
+          Value: !Ref EventRuleName
+        - Key: "CreatedBy"
+          Value: !Ref CreatedBy
+        - Key: "AccountNumber"
+          Value: !Ref AccountNumber
+        - Key: "Service"
+          Value: !Ref Service
+        - Key: "Environment"
+          Value: !Ref Environment
+        
+  CustomFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: "Custom function to tag event rule"
+      Handler: index.handler
+      Role: !Ref ExistingLambdaRole
+      Runtime: "python3.9"
+      Timeout: 100
+      Code:
+        ZipFile: |
+          import boto3
+          import botocore
+          import cfnresponse
+          
+          client = boto3.client("events")
+
+          def handler(event, context):
+            ResourceARN = event['ResourceProperties']['ResourceARN']
+            tags = event['ResourceProperties']['Tags']
+            if event['RequestType'] == 'Create':
+              response = client.tag_resource(
+                ResourceARN = ResourceARN,
+                Tags = tags
+              )
+              response = 'SUCCESS'
+              responseData = {}
+              responseData['Data'] = response
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, "CustomResourcePhysicalID")
+            
+            if event['RequestType'] == 'Update':
+              response = 'SUCCESS'
+              responseData = {}
+              responseData['Data'] = response
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, "CustomResourcePhysicalID")
+
+            if event['RequestType'] == 'Delete':
+              for i in tags:
+                response = client.untag_resource(
+                  ResourceARN = ResourceARN,
+                  TagKeys = [i['Key']]
+                )
+                response = 'SUCCESS'
+                responseData = {}
+                responseData['Data'] = response
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, "CustomResourcePhysicalID")
+
+
+
