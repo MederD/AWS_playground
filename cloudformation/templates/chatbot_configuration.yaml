@@ -1,0 +1,195 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: > 
+  Stack creates chatbot configuration and related IAM role with the policy for alarm notifications.
+
+Metadata:
+  'AWS::CloudFormation::Interface':
+    ParameterGroups:
+      - Label:
+          default: SNS Settings
+        Parameters:
+          - SNSTopicArn
+      - Label:
+          default: Slack Settings
+        Parameters:
+          - SlackChannelId
+          - SlackWorkspaceId
+      - Label:
+          default: Tagging Policy
+        Parameters:
+          - Environment
+          - Service
+          - CreatedBy
+          - AccountNumber
+          - Name
+      - Label:
+          default: GuardrailPolicies
+        Parameters:
+          - CloudWatchReadOnlyAccess
+      - Label:
+          default: Chatbot Settings
+        Parameters:
+          - ConfigurationName
+      - Label:
+          default: IAM Settings
+        Parameters:
+          - ExistingRole
+
+    ParameterLabels:
+      SNSTopicArn:
+        default: SNSTopicArn
+      SlackChannelId:
+        default: SlackChannelId
+      SlackWorkspaceId:
+        default: SlackWorkspaceId
+      Environment:
+        default: Tag:Environment
+      CreatedBy:
+        default: Tag:CreatedBy
+      AccountNumber:
+        default: Tag:AccountNumber
+      Service:
+        default: Tag:Service Name
+      Name:
+        default: Tag:Name of the resource
+      CloudWatchReadOnlyAccess:
+        default: AWS Managed CloudWatchReadOnlyAccess
+      ConfigurationName:
+        default: Chatbot ConfigurationName
+      ExistingRole:
+        default: Existing IAM Role for Chatbot
+    
+
+Parameters:
+  SNSTopicArn:
+    Type: CommaDelimitedList
+    Default: 
+    Description: The ARN of the SNS topic
+  SlackChannelId:
+    Type: String
+    Default: 
+    Description: Id of the slack channel
+  SlackWorkspaceId:
+    Type: String
+    Default: 
+    Description: Id of the slack worskpace.
+  Environment:
+    Type: String
+    Default: 
+    Description: Enter Environment value
+  Service:
+    Type: String
+    Default: 
+    Description: Enter the service name for applications.
+  CreatedBy:
+    Type: String
+    Default: 
+    Description: Enter creator name
+  AccountNumber:
+    Default: 
+    Type: String
+    Description: Enter AccountNumber
+  CloudWatchReadOnlyAccess:
+    Default: 'arn:aws:iam::aws:policy/CloudWatchReadOnlyAccess'
+    Type: CommaDelimitedList
+    Description: 'Provides permissions to CloudWatch Logs.'
+  ExistingRole:
+    Type: String
+    Default: 
+    Description: Existing IAM Role for Chatbot
+    AllowedValues: [ ARN-OF-YOUR-EXISTING-ROLE, NONE ]
+  ConfigurationName:
+    Default: 
+    Description: Send alarm notifications to slack
+    Type: String
+
+Conditions: 
+  CreateNewRole: !Equals [ !Ref ExistingRole, NONE]
+
+Resources:
+  Role:
+    Type: AWS::IAM::Role
+    Condition: CreateNewRole
+    Properties:
+      Tags: 
+        - Key: 'Name'
+          Value: 'AWSChatbot-role-Notifications-To-Slack'
+        - Key: 'CreatedBy'
+          Value: !Ref CreatedBy
+        - Key: 'AccountNumber'
+          Value: !Ref AccountNumber
+        - Key: 'Service'
+          Value: !Ref Service
+        - Key: 'Environment'
+          Value: !Ref Environment
+      RoleName: 'AWSChatbot-role-Notifications-To-Slack'
+      Policies:
+      - PolicyName: 'AWS-Chatbot-NotificationsOnly-Policy'
+        PolicyDocument: 
+          Version: '2012-10-17'
+          Statement: 
+            - Sid: 'AWSChatbotNotificationsOnly'
+              Effect: 'Allow'
+              Action: 
+                - cloudwatch:Describe
+                - cloudwatch:Get*
+                - cloudwatch:List*
+              Resource: "*"
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - chatbot.amazonaws.com
+
+  LogGroup1:
+    DependsOn: Chatbot
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join
+      - '/'
+      - -  /aws/chatbot
+        -  !Ref ConfigurationName
+      RetentionInDays: 30
+      Tags: 
+        - Key: Name
+          Value: !Join
+          - '/'
+          - -  /aws
+            -  chatbot
+            -  !Ref ConfigurationName
+        - Key: CreatedBy
+          Value: !Ref CreatedBy
+        - Key: AccountNumber
+          Value: !Ref AccountNumber
+        - Key: Service
+          Value: !Ref Service
+        - Key: Environment
+          Value: !Ref Environment
+  
+
+  Chatbot:
+    # DependsOn: Role
+    Type: AWS::Chatbot::SlackChannelConfiguration
+    Properties: 
+      ConfigurationName: !Ref ConfigurationName
+      GuardrailPolicies: !Ref CloudWatchReadOnlyAccess
+      IamRoleArn: !If [ CreateNewRole, !GetAtt Role.Arn, !Ref ExistingRole ]
+      LoggingLevel: ERROR
+      SlackChannelId: !Ref SlackChannelId
+      SlackWorkspaceId: !Ref SlackWorkspaceId
+      SnsTopicArns: !Ref SNSTopicArn
+
+  
+Outputs:
+  ChatbotIAMRole:
+    Description: ARN of the Chatbot IAM Role
+    Value: !If [ CreateNewRole, !GetAtt Role.Arn, !Ref ExistingRole ]
+  ChatbotConfig:
+    Description: ARN of the configuration
+    Value: !Ref Chatbot
+  
