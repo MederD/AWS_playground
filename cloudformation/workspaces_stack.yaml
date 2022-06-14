@@ -1,0 +1,674 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: > 
+  Stack creates:
+  - lambda function to query workspaces
+  - scheduled eventrule to trigger lambda
+  - IAM role for cloudtrail service to be able to publish Logs in cloudwatch 
+  - SNS topic with lambda function subscription to send notifications to slack channel
+  - lambda function to send notifications to slack channel
+
+Metadata:
+  'AWS::CloudFormation::Interface':
+    ParameterGroups:
+      - Label:
+          default: EventRule Settings
+        Parameters: 
+          - EventRuleName
+      - Label:
+          default: SNS Settings
+        Parameters:
+          - SNSTopicName
+          - ExistingSNSTopicArn
+      - Label:
+          default: Tagging Policy
+        Parameters:
+          - Environment
+          - Service
+          - CreatedBy
+          - CreatedWith
+          - AccountNumber
+      - Label:
+          default: Lambda Function Settings
+        Parameters:
+          - Runtime
+          - SlackUrl
+          - ExistingLambdaRole
+          - ExistingSNSLambda
+      - Label:
+          default: IAM Settings
+        Parameters:
+          - AWSLambdaBasicExecutionRolePolicy
+          - AmazonSNSReadOnlyPolicy
+          - AmazonEventBridgeFullAccess
+          - CloudWatchLogsFullAccess
+
+    ParameterLabels:
+      EventRuleName:
+        default: EventRule Name
+      Environment:
+        default: Tag:Environment
+      CreatedBy:
+        default: Tag:CreatedBy
+      CreatedWith:
+        default: Tag:CreatedWith
+      AccountNumber:
+        default: Tag:AccountNumber
+      Service:
+        default: Tag:Service Name
+      AWSLambdaBasicExecutionRolePolicy:
+        default: AWS Managed LambdaBasicExecutionRolePolicy
+      AmazonSNSReadOnlyPolicy:
+        default: AWS Managed AmazonSNSReadOnlyPolicy
+      AmazonEventBridgeFullAccess:
+        default: AWS Managed AmazonEventBridgeFullAccess
+      CloudWatchLogsFullAccess:
+        default: AWS Managed CloudWatchLogsFullAccess
+      CreatedWith:
+        default: CreatedWith
+      SlackUrl:
+        default: SlackUrl
+      ExistingSNSTopicArn:
+        default: ExistingSNSTopicArn
+      SNSTopicName:
+        default: SNSTopicName
+      ExistingLambdaRole:
+        default: ExistingLambdaRole
+      ExistingSNSLambda:
+        default: ExistingSNSLambda
+
+Parameters:
+  EventRuleName:
+    Type: String
+    Description: Scheduled rule to trigger workspaces query function
+  Environment:
+    Type: String
+    Description: Enter Environment value
+  Service:
+    Type: String
+    Description: Enter the service name for applications.
+  CreatedBy:
+    Type: String
+    Description: Enter creator name
+  CreatedWith:
+    Type: String
+    Description: Resource creation method
+  AccountNumber:
+    Type: String
+    Description: Enter AccountNumber
+  AWSLambdaBasicExecutionRolePolicy:
+    Default: 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+    Type: String
+    Description: 'Provides write permissions to CloudWatch Logs.'
+  AmazonSNSReadOnlyPolicy:
+    Default: 'arn:aws:iam::aws:policy/AmazonSNSReadOnlyAccess'
+    Type: String
+    Description: 'Provides readonly access to SNS.'
+  AmazonEventBridgeFullAccess:
+    Default: 'arn:aws:iam::aws:policy/AmazonEventBridgeFullAccess'
+    Type: String
+    Description: 'Full AmazonEventBridgeFullAccess'
+  CloudWatchLogsFullAccess:
+    Default: 'arn:aws:iam::aws:policy/CloudWatchLogsFullAccess'
+    Type: String
+    Description: 'CloudWatchLogsFullAccess'
+  Runtime:
+    Default: 'python3.9'
+    Type: String
+    Description: Runtime of the lambda function.
+  SlackUrl:
+    Type: String
+    Description: Url of the slack channel
+  ExistingSNSTopicArn:
+    Type: String
+    Description: Existing SNS topic arn for the lambda notifications, use NONE to create new topic
+  SNSTopicName:
+    Type: String
+    Description: Name of the new topic
+  ExistingLambdaRole:
+    Type: String
+    Description: Existing lambda role or use NONE to create new IAM role
+  ExistingSNSLambda:
+    Type: String
+    Description: Existing lambda functions name, or use NONE to create new one
+
+Conditions: 
+  CreateNewRole: !Equals [ !Ref ExistingLambdaRole, NONE]
+  CreateNewTopic: !Equals [ !Ref ExistingSNSTopicArn, NONE]
+  CreateNewLambda: !Equals [ !Ref ExistingSNSLambda, NONE ]
+
+Resources:
+  SNSTopic:
+    Condition: CreateNewTopic
+    Type: AWS::SNS::Topic
+    Properties: 
+      DisplayName: !Ref SNSTopicName
+      Tags:
+        - Key: Name
+          Value: !Ref SNSTopicName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Service
+          Value: !Ref Service
+        - Key: CreatedBy
+          Value: !Ref CreatedBy
+        - Key: AccountNumber
+          Value: !Ref AccountNumber
+        - Key: 'StackName'
+          Value: !Ref AWS::StackName
+        - Key: 'CreatedWith'
+          Value: !Ref CreatedWith
+      TopicName: !Ref SNSTopicName
+
+  SNSTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Condition: CreateNewTopic
+    Properties:
+      PolicyDocument:
+        Id: TopicPolicy
+        Version: '2008-10-17'
+        Statement:
+          # --- DEFAULT PERMISSIONS ---
+          - Sid: '__default_statement_ID'
+            Effect: Allow
+            Principal:
+              AWS: "*"
+            Action:
+              - sns:GetTopicAttributes
+              - sns:SetTopicAttributes
+              - sns:AddPermission
+              - sns:RemovePermission
+              - sns:DeleteTopic
+              - sns:Subscribe
+              - sns:ListSubscriptionsByTopic
+              - sns:Publish
+            Resource: !Ref SNSTopic
+            Condition:
+              StringEquals:
+                'AWS:SourceOwner': !Sub '${AWS::AccountId}'
+      Topics:
+        - !Ref SNSTopic
+  
+  PermissionToInvokeLambdaSNS: 
+    Type: AWS::Lambda::Permission
+    Properties: 
+      FunctionName: !If [ CreateNewLambda, !Ref SNSLambdaFunction, !Ref ExistingSNSLambda ]
+      Action: 'lambda:InvokeFunction'
+      Principal: 'sns.amazonaws.com'
+      SourceArn: !If [ CreateNewTopic, !Ref SNSTopic, !Ref ExistingSNSTopicArn ] 
+
+  SNSLambdaFunction:
+    Condition: CreateNewLambda
+    Type: AWS::Serverless::Function
+    Properties: 
+      Description: !Join
+      - '-'
+      - -  'SendNotificationsToSlackChannel'
+        -  'Function'
+      FunctionName: !Join
+      - '-'
+      - -  'SendNotificationsToSlackChannel'
+        -  'Function'
+      Handler: index.handler
+      Role: !If [ CreateNewRole, !GetAtt LambdaRole.Arn, !Ref ExistingLambdaRole ]
+      Runtime: !Ref Runtime
+      InlineCode: |
+        import urllib3
+        import json, os, logging
+        from pprint import pprint
+        from botocore.exceptions import ClientError
+        logging.basicConfig(level=logging.INFO, 
+          format='%(asctime)s %(levelname)s %(message)s',
+          datefmt='%H:%M:%S')
+        logger = logging.getLogger(__name__)
+        http = urllib3.PoolManager()
+        env_url = os.environ['url']
+        logger.info("Slack url: %s.", env_url)
+        def handler(event, context):
+          url = env_url
+          msg = {
+            "text": event['Records'][0]['Sns']['Message']
+          }
+          logger.info("Constructing message %s.", msg)
+          encoded_msg = json.dumps(msg).encode('utf-8')
+          try:
+            resp = http.request('POST',url, body=encoded_msg)
+            pprint({
+              "message": event['Records'][0]['Sns']['Message'],
+              "status_code": resp.status,
+              "response": resp.data
+            })
+          except ClientError:
+            logger.exception("Error")
+            raise
+      Timeout: 30
+      Environment:
+        Variables:
+          url: !Ref SlackUrl
+      Events:
+        SNSEvent:
+          Type: SNS
+          Properties:
+            Topic: !If [ CreateNewTopic, !Ref SNSTopic, !Ref ExistingSNSTopicArn ] 
+      Tags: 
+        Name: !Join
+        - '-'
+        - -  'SendNotificationsToSlack'
+          -  'Function'
+        CreatedBy: !Ref CreatedBy
+        AccountNumber: !Ref AccountNumber
+        Service: !Ref Service
+        Environment: !Ref Environment
+        SlackChannel: 'aws-budget-alarms'
+        CreatedWith: !Ref CreatedWith
+        StackName: !Ref AWS::StackName
+
+  LogGroup3:
+    DependsOn: SNSLambdaFunction
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join
+      - '/'
+      - -  /aws/lambda
+        -  !Ref SNSLambdaFunction
+      RetentionInDays: 30
+      Tags: 
+        - Key: Name
+          Value: !Join
+          - '/'
+          - -  /aws/lambda
+            -  !Ref SNSLambdaFunction
+        - Key: CreatedBy
+          Value: !Ref CreatedBy
+        - Key: AccountNumber
+          Value: !Ref AccountNumber
+        - Key: Service
+          Value: !Ref Service
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CreatedWith
+          Value: !Ref CreatedWith
+        - Key: 'StackName'
+          Value: !Ref AWS::StackName
+
+  EventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Ref EventRuleName
+      Description: !Join
+      - '-'
+      - -  'Event Rule to trigger Lambda function'
+        -  !Ref EventRuleName
+      ScheduleExpression: "rate(5 days)"
+      State: 'ENABLED'
+      Targets:
+        - Arn: !GetAtt LambdaFunctionToReadEvents.Arn
+          Id: 'AlarmLambda'
+
+  CustomTagEvent:
+    Type: Custom::TagEventRule
+    Version: '1.0'
+    DependsOn: EventRule
+    Properties:
+      ServiceToken: !GetAtt CustomFunction.Arn
+      ResourceARN: 
+        Fn::GetAtt:
+          - 'EventRule'
+          - 'Arn'
+      Tags: 
+        - Key: 'Name'
+          Value: !Ref EventRuleName
+        - Key: 'CreatedBy'
+          Value: !Ref CreatedBy
+        - Key: 'AccountNumber'
+          Value: !Ref AccountNumber
+        - Key: 'Service'
+          Value: !Ref Service
+        - Key: 'Environment'
+          Value: !Ref Environment
+        - Key: 'CreatedWith'
+          Value: !Ref CreatedWith
+        - Key: 'StackName'
+          Value: !Ref AWS::StackName
+        
+  CustomFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Join
+      - '-'
+      - -  !Ref EventRuleName
+        -  'EventRule'
+        -  'CustomFunction'
+      Description: !Join
+      - '-'
+      - -  'Custom function to tag event rule'
+        -  !Ref EventRuleName
+      Handler: index.handler
+      Role: !GetAtt LambdaRole.Arn
+      Runtime: !Ref Runtime
+      Timeout: 30
+      Tags: 
+        - Key: "Name"
+          Value: "CustomLambdaFunction-TagEventRule"
+        - Key: "CreatedBy"
+          Value: !Ref CreatedBy
+        - Key: "AccountNumber"
+          Value: !Ref AccountNumber
+        - Key: "Service"
+          Value: !Ref Service
+        - Key: "Environment"
+          Value: !Ref Environment
+        - Key: 'CreatedWith'
+          Value: !Ref CreatedWith
+        - Key: 'StackName'
+          Value: !Ref AWS::StackName
+      Code:
+        ZipFile: |
+          import boto3
+          import botocore
+          import cfnresponse
+          
+          client = boto3.client('events')
+
+          def handler(event, context):
+            ResourceARN = event['ResourceProperties']['ResourceARN']
+            tags = event['ResourceProperties']['Tags']
+            if event['RequestType'] == 'Create':
+              response = client.tag_resource(
+                ResourceARN = ResourceARN,
+                Tags = tags
+              )
+              response = 'SUCCESS'
+              responseData = {}
+              responseData['Data'] = response
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, 'CustomResourcePhysicalID')
+            
+            if event['RequestType'] == 'Update':
+              response = 'SUCCESS'
+              responseData = {}
+              responseData['Data'] = response
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, 'CustomResourcePhysicalID')
+
+            if event['RequestType'] == 'Delete':
+              for i in tags:
+                response = client.untag_resource(
+                  ResourceARN = ResourceARN,
+                  TagKeys = [i['Key']]
+                )
+                response = 'SUCCESS'
+                responseData = {}
+                responseData['Data'] = response
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, 'CustomResourcePhysicalID')
+
+  LambdaRole:
+    Condition: CreateNewRole
+    Type: AWS::IAM::Role
+    Properties:
+      Tags: 
+        - Key: 'Name'
+          Value: 'LambdaForWorkspaceQuery-Role'
+        - Key: 'CreatedBy'
+          Value: !Ref CreatedBy
+        - Key: 'AccountNumber'
+          Value: !Ref AccountNumber
+        - Key: 'Service'
+          Value: !Ref Service
+        - Key: 'Environment'
+          Value: !Ref Environment
+        - Key: CreatedWith
+          Value: !Ref CreatedWith
+        - Key: 'StackName'
+          Value: !Ref AWS::StackName
+      RoleName: 'LambdaForWorkspaceQuery-Role'
+      Policies:
+      - PolicyName: 'LambdaKMSPolicy'
+        PolicyDocument: 
+          Version: '2012-10-17'
+          Statement: 
+            - Sid: 'AllowAccessToKMS'
+              Effect: 'Allow'
+              Action: 
+                - kms:Decrypt
+                - kms:DescribeKey
+                - kms:GenerateDataKey*
+              Resource: "*"
+              Condition:
+                StringLike: 
+                  'kms:RequestAlias': 'aws/lambda'
+            - Sid: 'WorkspaceQuery'
+              Effect: 'Allow'
+              Action: 
+                - workspaces:DescribeWorkspaces
+                - workspaces:DescribeWorkspacesConnectionStatus
+              Resource: !Sub "arn:aws:workspaces:${AWS::Region}:${AWS::AccountId}:workspace/*"
+            - Sid: 'SNSPublish'
+              Effect: 'Allow'
+              Action: 
+                - sns:Publish
+              Resource: !If [ CreateNewTopic, !Ref SNSTopic, !Ref ExistingSNSTopicArn ] 
+           
+ 
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+      Path: /
+      ManagedPolicyArns:
+        - !Ref AWSLambdaBasicExecutionRolePolicy
+        - !Ref AmazonSNSReadOnlyPolicy
+        - !Ref AmazonEventBridgeFullAccess
+        - !Ref CloudWatchLogsFullAccess
+
+  PermissionToInvokeLambda: 
+    Type: AWS::Lambda::Permission
+    Properties: 
+      FunctionName: 
+        Ref: 'LambdaFunctionToReadEvents'
+      Action: 'lambda:InvokeFunction'
+      Principal: 'events.amazonaws.com'
+      SourceArn: !GetAtt EventRule.Arn
+
+  LambdaFunctionToReadEvents:
+    Type: AWS::Serverless::Function
+    Properties: 
+      Description: !Join
+      - '-'
+      - -  !Ref EventRuleName
+        -  'function'
+      FunctionName: 'WorkspaceQueryFunction'
+      Handler: index.handler
+      Role: !If [ CreateNewRole, !GetAtt LambdaRole.Arn, !Ref ExistingLambdaRole ]
+      Runtime: !Ref Runtime
+      InlineCode: |
+        import boto3, json, traceback, logging, os
+        from botocore.exceptions import ClientError
+        from pprint import pprint
+        import time
+        from datetime import datetime, timedelta
+
+        thelogcounts = { 'INFO': 1, 'ERROR': 1, 'DEBUG': 1}
+
+        class ContextFilter(logging.Filter):
+            def filter(self, record):
+                global thelogcounts
+                record.count = thelogcounts[record.levelname]
+                thelogcounts[record.levelname] += 1
+                return True
+
+        logging.basicConfig(level=logging.INFO, 
+            format='%(levelname)s: %(count)s: %(message)s')
+
+        logger = logging.getLogger(__name__)
+        logger.addFilter(ContextFilter())
+
+        client = boto3.client('workspaces')
+        client_sns = boto3.client('sns')
+
+        now = datetime.utcnow()
+        only_date = now.date()
+        logger.info('Todays date is: %s' % ( only_date ))
+        print ("Today's date is:", (only_date))
+        topic = os.environ['sns_topic']
+
+        def handler(event, context):
+            try:
+                sns_topic = topic
+                w_active_list = []
+                w_not_active_list = []
+                response = client.describe_workspaces_connection_status()
+                results = response['WorkspacesConnectionStatus']
+                while 'NextToken' in response:
+                    response = client.describe_workspaces_connection_status(NextToken = response['NextToken'])
+                    results.extend(response['WorkspacesConnectionStatus'])
+                for i in results:
+                    if 'LastKnownUserConnectionTimestamp' in i:
+                        logger.info('Active workspace: %s' % ( i['WorkspaceId'] ))
+                        w_active_list.append(i['WorkspaceId'])
+                        time = (i['LastKnownUserConnectionTimestamp']).date()
+                        w_active_list.append(time)
+                    else:
+                        logger.info('Not active workspace: %s' % ( i['WorkspaceId'] ))
+                        w_not_active_list.append(i['WorkspaceId'])
+                print('Active workspaces and last used time',w_active_list)
+                print('Not active workspaces:', w_not_active_list)
+                message = "Active workspaces and last used time: {0} \nNot active workspaces: {1} ".format(w_active_list, w_not_active_list)
+                response = client_sns.publish(
+                                TargetArn=sns_topic,
+                                Message = message,
+                                Subject='Workspaces report'
+                            )
+            except Exception:
+                logger.exception("Error!")
+                raise
+      Timeout: 30
+      Environment:
+        Variables:
+          sns_topic: !If [ CreateNewTopic, !Ref SNSTopic, !Ref ExistingSNSTopicArn ] 
+      Tags: 
+        Name: 'WorkspaceQueryFunction'
+        CreatedBy: !Ref CreatedBy
+        AccountNumber: !Ref AccountNumber
+        Service: !Ref Service
+        Environment: !Ref Environment
+        CreatedWith: !Ref CreatedWith
+        StackName: !Ref AWS::StackName
+
+  LambdaFunctionChangeRetention:
+    DependsOn: LambdaFunctionToReadEvents
+    Type: AWS::Serverless::Function
+    Properties: 
+      Description: !Join
+      - '-'
+      - -  !Ref EventRuleName
+        -  'function'
+        -  'change retention days'
+      FunctionName: 'ChangeRetentionOnWorkspaceQueryFunction'
+      Handler: index.handler
+      Role: !If [ CreateNewRole, !GetAtt LambdaRole.Arn, !Ref ExistingLambdaRole ]
+      Runtime: !Ref Runtime
+      Events: 
+        TriggerEvent:
+          Type: EventBridgeRule
+          Properties:
+            Pattern: 
+              source: 
+                - "aws.logs"
+              detail-type:
+                - 'AWS API Call via CloudTrail'
+              detail:
+                eventSource:
+                - 'logs.amazonaws.com'
+              resources:
+                - !GetAtt CustomFunction.Arn
+
+  
+      InlineCode: |
+        import boto3, json, traceback, logging, os
+        from botocore.exceptions import ClientError
+        
+        thelogcounts = { 'INFO': 1, 'ERROR': 1, 'DEBUG': 1}
+
+        class ContextFilter(logging.Filter):
+            def filter(self, record):
+                global thelogcounts
+                record.count = thelogcounts[record.levelname]
+                thelogcounts[record.levelname] += 1
+                return True
+
+        logging.basicConfig(level=logging.INFO, 
+            format='%(levelname)s: %(count)s: %(message)s')
+
+        logger = logging.getLogger(__name__)
+        logger.addFilter(ContextFilter())
+
+        client = boto3.client('logs')
+
+        logGroup1 = os.environ['logGroup1']
+        logGroup2 = os.environ['logGroup2']
+
+        def handler(event, context):
+            try:
+                logGroupOne = logGroup1
+                print(logGroupOne)
+                logGroupTwo = logGroup2
+                print(logGroupTwo)
+                logs = []
+                response = client.describe_log_groups()
+                results = response['logGroups']
+                while 'NextToken' in response:
+                    response = client.describe_log_groups(NextToken = response['NextToken'])
+                    results.extend(response['logGroupName'])
+                for i in results:
+                    logs.append(i['logGroupName'])
+                if logGroupOne in logs:
+                  response1 = client.put_retention_policy(
+                      logGroupName=logGroupOne,
+                      retentionInDays = 7
+                  )
+                  result = client.describe_log_groups(
+                      logGroupNamePrefix = logGroupOne
+                  )
+                  for j in result['logGroups']:
+                          print(j['logGroupName'], ':', j['retentionInDays'])
+                if logGroupTwo in logs:
+                  response2 = client.put_retention_policy(
+                      logGroupName=logGroupTwo,
+                      retentionInDays = 7
+                  )
+                  result = client.describe_log_groups(
+                      logGroupNamePrefix = logGroupTwo
+                  )
+                  for j in result['logGroups']:
+                          print(j['logGroupName'], ':', j['retentionInDays'])
+                else:
+                  print("Logs are not existing!")
+            except Exception:
+                logger.exception("Error!")
+                raise
+      Timeout: 30
+      Environment:
+        Variables:
+          logGroup1: !Join
+          - '/'
+          - -  /aws
+            -  lambda
+            -  !Ref LambdaFunctionToReadEvents
+          logGroup2: !Join
+          - '/'
+          - -  /aws
+            -  lambda
+            -  !Ref CustomFunction
+      Tags: 
+        Name: 'ChangeRetentionOnWorkspaceQueryFunction'
+        CreatedBy: !Ref CreatedBy
+        AccountNumber: !Ref AccountNumber
+        Service: !Ref Service
+        Environment: !Ref Environment
+        CreatedWith: !Ref CreatedWith
+        StackName: !Ref AWS::StackName
+
