@@ -1,0 +1,426 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: > 
+  Stack creates:
+  - EventRule to trigger lambda function.
+  - lambda function to change log retention durations.
+  - If there's no existing Lambda IAM role, then creates new role
+  - Custom lambda function to tag EventRule
+  - Log groups with modified log retention durations
+
+Metadata:
+  'AWS::CloudFormation::Interface':
+    ParameterGroups:
+      - Label:
+          default: Tagging Policy
+        Parameters:
+          - Environment
+          - Service
+          - CreatedBy
+          - AccountNumber
+          - Name
+          - CreatedWith
+      - Label:
+          default: IAM Settings
+        Parameters:
+          - AWSLambdaBasicExecutionRolePolicy
+          - AmazonEventBridgeFullAccess
+          - CloudWatchFullAccess
+      - Label:
+          default: EventRule Settings
+        Parameters:
+          - EventRuleName
+      - Label:
+          default: Lambda Function Settings
+        Parameters:
+          - Runtime
+
+    ParameterLabels:
+      Environment:
+        default: Tag:Environment
+      CreatedBy:
+        default: Tag:CreatedBy
+      AccountNumber:
+        default: Tag:AccountNumber
+      Service:
+        default: Tag:Service Name
+      Name:
+        default: Tag:Name of the resource
+      CreatedWith:
+        default: Tag:CreatedWith
+      AWSLambdaBasicExecutionRolePolicy:
+        default: AWS Managed LambdaBasicExecutionRolePolicy
+      AmazonEventBridgeFullAccess:
+        default: AWS Managed AmazonEventBridgeFullAccess
+      CloudWatchFullAccess:
+        default: AWS Managed CloudWatchFullAccess
+      EventRuleName:
+        default: Name of EventRule
+      Runtime:
+        default: Runtime of the function
+
+Parameters:
+  Environment:
+    Type: String
+    Description: Enter Environment value
+  Service:
+    Type: String
+    Description: Enter the service name for applications.
+  CreatedBy:
+    Type: String
+    Description: Enter creator name
+  AccountNumber:
+    Type: String
+    Description: Enter AccountNumber
+  CreatedWith:
+    Type: String
+    Description: Resource creation method
+  AWSLambdaBasicExecutionRolePolicy:
+    Default: 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+    Type: String
+    Description: 'Provides write permissions to CloudWatch Logs.'
+  AmazonEventBridgeFullAccess:
+    Default: 'arn:aws:iam::aws:policy/AmazonEventBridgeFullAccess'
+    Type: String
+    Description: 'AmazonEventBridgeFullAccess policy'
+  CloudWatchFullAccess:
+    Default: arn:aws:iam::aws:policy/CloudWatchFullAccess
+    Type: String
+    Description: CloudWatchFullAccess policy
+  ExistingLambdaRole:
+    Type: String
+    Description: Existing lambda role or use NONE to create new IAM role
+  EventRuleName:
+    Type: String
+    Description: Name of EventRule
+  Runtime:
+    Default: 'python3.9'
+    Type: String
+    Description: Runtime of the lambda function.
+
+Conditions: 
+  CreateNewRole: !Equals [ !Ref ExistingLambdaRole, NONE]
+
+Resources:
+  LogGroup1:
+    DependsOn: LambdaFunction
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join
+      - '/'
+      - -  /aws/lambda
+        -  !Ref LambdaFunction
+      RetentionInDays: 30
+      Tags: 
+        - Key: Name
+          Value: !Join
+          - '/'
+          - -  /aws/lambda
+            -  !Ref LambdaFunction
+        - Key: CreatedBy
+          Value: !Ref CreatedBy
+        - Key: AccountNumber
+          Value: !Ref AccountNumber
+        - Key: Service
+          Value: !Ref Service
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CreatedWith
+          Value: !Ref CreatedWith
+        - Key: 'StackName'
+          Value: !Ref AWS::StackName
+
+  LogGroup2:
+    DependsOn: CustomFunction
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join
+      - '/'
+      - -  /aws/lambda
+        -  !Ref CustomFunction
+      RetentionInDays: 30
+      Tags: 
+        - Key: Name
+          Value: !Join
+          - '/'
+          - -  /aws/lambda
+            -  !Ref CustomFunction
+        - Key: CreatedBy
+          Value: !Ref CreatedBy
+        - Key: AccountNumber
+          Value: !Ref AccountNumber
+        - Key: Service
+          Value: !Ref Service
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CreatedWith
+          Value: !Ref CreatedWith
+        - Key: 'StackName'
+          Value: !Ref AWS::StackName
+
+  LambdaRole:
+    Condition: CreateNewRole
+    Type: AWS::IAM::Role
+    Properties:
+      Tags: 
+        - Key: 'Name'
+          Value: 'LambdaForLogRetention-Role'
+        - Key: 'CreatedBy'
+          Value: !Ref CreatedBy
+        - Key: 'AccountNumber'
+          Value: !Ref AccountNumber
+        - Key: 'Service'
+          Value: !Ref Service
+        - Key: 'Environment'
+          Value: !Ref Environment
+        - Key: CreatedWith
+          Value: !Ref CreatedWith
+        - Key: 'StackName'
+          Value: !Ref AWS::StackName
+      RoleName: 'LambdaForLogRetention-Role'
+      Policies:
+      - PolicyName: 'LambdaKMSPolicy'
+        PolicyDocument: 
+          Version: '2012-10-17'
+          Statement: 
+            - Sid: 'AllowAccessToKMS'
+              Effect: 'Allow'
+              Action: 
+                - kms:Decrypt
+                - kms:DescribeKey
+                - kms:GenerateDataKey*
+              Resource: "*"
+              Condition:
+                StringLike: 
+                  'kms:RequestAlias': 'aws/lambda'
+ 
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+      Path: /
+      ManagedPolicyArns:
+        - !Ref AWSLambdaBasicExecutionRolePolicy
+        - !Ref AmazonEventBridgeFullAccess
+        - !Ref CloudWatchFullAccess
+
+  PermissionForEventsToInvokeLambda: 
+    Type: AWS::Lambda::Permission
+    Properties: 
+      FunctionName: 
+        Ref: "LambdaFunction"
+      Action: "lambda:InvokeFunction"
+      Principal: "events.amazonaws.com"
+      SourceArn: !GetAtt EventRule.Arn
+
+  EventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Ref EventRuleName
+      Description: "Event Rule to trigger lambda"
+      EventPattern:
+        source:
+          - "aws.logs"
+        detail-type:
+          - "AWS API Call via CloudTrail"
+        detail:
+          eventSource:
+            - "logs.amazonaws.com"
+          eventName:
+            - "CreateLogGroup"
+      State: "ENABLED"
+      Targets:
+        - Arn: !GetAtt LambdaFunction.Arn
+          Id: "LambdaFunction"
+
+  LambdaFunction:
+    Type: AWS::Serverless::Function
+    # DependsOn: LambdaRole
+    Properties: 
+      Description: !Join
+      - '-'
+      - -  !Ref EventRuleName
+        -  'Function'
+      FunctionName: !Join
+      - '-'
+      - -  !Ref EventRuleName
+        -  'Function'
+      Handler: index.handler
+      Role: !If [ CreateNewRole, !GetAtt LambdaRole.Arn, !Ref ExistingLambdaRole ]
+      Runtime: !Ref Runtime
+      InlineCode: |
+        import boto3, json, traceback, logging, os, re
+        from botocore.exceptions import ClientError
+        from pprint import pprint
+
+        thelogcounts = { 'INFO': 1, 'ERROR': 1, 'DEBUG': 1}
+
+        class ContextFilter(logging.Filter):
+            def filter(self, record):
+                global thelogcounts
+                record.count = thelogcounts[record.levelname]
+                thelogcounts[record.levelname] += 1
+                return True
+
+        logging.basicConfig(level=logging.INFO, 
+            format='%(levelname)s: %(count)s: %(message)s')
+
+        logger = logging.getLogger(__name__)
+        logger.addFilter(ContextFilter())
+
+        client = boto3.client('logs')
+
+        def handler(event, context):
+            try:
+                logs = []
+                response = client.describe_log_groups( )
+                results = response[ 'logGroups' ]
+                while 'nextToken' in response:
+                    response = client.describe_log_groups( nextToken = response[ 'nextToken' ] )
+                    results.extend( response[ 'logGroups' ] )
+                for i in results:
+                    logs.append( i[ 'logGroupName' ] )
+                logger.info( 'Total log count: %s' % len(logs) )
+                print( 'Total log count: %s' % len(logs) )
+                for log in logs:
+                    if re.search( "lambda|glue|codebuild|rds|ecs|sns|chatbot", log ):
+                        logger.info( 'Logs-30days: %s' % log ) 
+                        response = client.put_retention_policy(
+                            logGroupName = log,
+                            retentionInDays = 30
+                        )
+                        logger.info( 'Log status-30days %s' % response['ResponseMetadata']['HTTPStatusCode'] )
+                        print( 'HTTPStatusCode:', response['ResponseMetadata']['HTTPStatusCode'] )
+                    else:
+                        logger.info( 'Logs-90days %s' % log ) 
+                        response = client.put_retention_policy(
+                            logGroupName = log,
+                            retentionInDays = 90
+                        )
+                        logger.info( 'Log status-90days %s' % response['ResponseMetadata']['HTTPStatusCode'] ) 
+                        print( 'HTTPStatusCode:', response['ResponseMetadata']['HTTPStatusCode'] )
+            except Exception:
+                logger.exception("Error!")
+                raise
+      Timeout: 60
+      Tags: 
+        Name: !Join
+        - '-'
+        - -  !Ref EventRuleName
+          -  'Function'
+        CreatedBy: !Ref CreatedBy
+        AccountNumber: !Ref AccountNumber
+        Service: !Ref Service
+        Environment: !Ref Environment
+        CreatedWith: !Ref CreatedWith
+        StackName: !Ref AWS::StackName
+
+  CustomTagEvent:
+    Type: Custom::TagEventRule
+    Version: '1.0'
+    DependsOn: EventRule
+    Properties:
+      ServiceToken: !GetAtt CustomFunction.Arn
+      ResourceARN: 
+        Fn::GetAtt:
+          - 'EventRule'
+          - 'Arn'
+      Tags: 
+        - Key: 'Name'
+          Value: !Ref EventRuleName
+        - Key: 'CreatedBy'
+          Value: !Ref CreatedBy
+        - Key: 'AccountNumber'
+          Value: !Ref AccountNumber
+        - Key: 'Service'
+          Value: !Ref Service
+        - Key: 'Environment'
+          Value: !Ref Environment
+        - Key: 'CreatedWith'
+          Value: !Ref CreatedWith
+        - Key: 'StackName'
+          Value: !Ref AWS::StackName
+        
+  CustomFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Join
+      - '-'
+      - -  !Ref EventRuleName
+        -  'EventRule'
+        -  'CustomFunction'
+      Description: !Join
+      - '-'
+      - -  'Custom function to tag event rule'
+        -  !Ref EventRuleName
+      Handler: index.handler
+      Role: !If [ CreateNewRole, !GetAtt LambdaRole.Arn, !Ref ExistingLambdaRole ]
+      Runtime: !Ref Runtime
+      Timeout: 60
+      Tags: 
+        - Key: "Name"
+          Value: "CustomLambdaFunction-TagEventRule"
+        - Key: "CreatedBy"
+          Value: !Ref CreatedBy
+        - Key: "AccountNumber"
+          Value: !Ref AccountNumber
+        - Key: "Service"
+          Value: !Ref Service
+        - Key: "Environment"
+          Value: !Ref Environment
+        - Key: "CreatedWith"
+          Value: !Ref CreatedWith
+        - Key: 'StackName'
+          Value: !Ref AWS::StackName
+      Code:
+        ZipFile: |
+          import boto3
+          import botocore
+          import cfnresponse
+          
+          client = boto3.client('events')
+
+          def handler(event, context):
+            ResourceARN = event['ResourceProperties']['ResourceARN']
+            tags = event['ResourceProperties']['Tags']
+            
+            if event['RequestType'] == 'Create':
+              response = client.tag_resource(
+                ResourceARN = ResourceARN,
+                Tags = tags
+              )
+              response = 'SUCCESS'
+              responseData = {}
+              responseData['Data'] = response
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, 'CustomResourcePhysicalID')
+            
+            if event['RequestType'] == 'Update':
+              response = client.tag_resource(
+                ResourceARN = ResourceARN,
+                Tags = tags
+              )
+              response = 'SUCCESS'
+              responseData = {}
+              responseData['Data'] = response
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, 'CustomResourcePhysicalID')
+
+            if event['RequestType'] == 'Delete':
+              for i in tags:
+                response = client.untag_resource(
+                  ResourceARN = ResourceARN,
+                  TagKeys = [i['Key']]
+                )
+                response = 'SUCCESS'
+                responseData = {}
+                responseData['Data'] = response
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, 'CustomResourcePhysicalID')
+
+Outputs:
+  LambdaIAMRole:
+    Description: ARN of the Lambda IAM Role
+    Value: !If [ CreateNewRole, !GetAtt LambdaRole.Arn, !Ref ExistingLambdaRole ]
