@@ -1,0 +1,580 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: > 
+  Stack creates:
+  - DynamoDB table
+  - Required IAM permissions
+  - Lambda functions
+
+
+Metadata:
+  'AWS::CloudFormation::Interface':
+    ParameterGroups:
+      - Label:
+          default: Tagging Policy
+        Parameters:
+          - Environment
+          - Service
+          - CreatedBy
+          - AccountNumber
+          - Name
+          - CreatedWith
+      - Label:
+          default: IAM Settings
+        Parameters:
+          - AWSLambdaBasicExecutionRolePolicy
+      - Label:
+          default: DynamoDB Settings
+        Parameters:
+          - TableName
+      - Label:
+          default: Lambda Function Settings
+        Parameters:
+          - Runtime
+          - FunctionName
+
+    ParameterLabels:
+      Environment:
+        default: Tag:Environment
+      CreatedBy:
+        default: Tag:CreatedBy
+      AccountNumber:
+        default: Tag:AccountNumber
+      Service:
+        default: Tag:Service Name
+      Name:
+        default: Tag:Name of the resource
+      CreatedWith:
+        default: Tag:CreatedWith
+      AWSLambdaBasicExecutionRolePolicy:
+        default: AWS Managed LambdaBasicExecutionRolePolicy
+      TableName:
+        default: DynamoDB TableName
+      Runtime:
+        default: Runtime of the function
+      FunctionName:
+        default: Lambda function name
+
+Parameters:
+  Environment:
+    Type: String
+    Description: Enter Environment value
+  Service:
+    Type: String
+    Description: Enter the service name for applications.
+  CreatedBy:
+    Type: String
+    Description: Enter creator name
+  AccountNumber:
+    Type: String
+    Description: Enter AccountNumber
+  CreatedWith:
+    Type: String
+    Description: Resource creation method
+  AWSLambdaBasicExecutionRolePolicy:
+    Default: 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+    Type: String
+    Description: 'Provides write permissions to CloudWatch Logs.'
+  TableName:
+    Type: String
+    Default: 'url-shortener-table'
+    Description: Name of DynamoDB table
+  Runtime:
+    Default: 'python3.9'
+    Type: String
+    Description: Runtime of the lambda function.
+  FunctionName:
+    Default: 'url-shortener'
+    Type: String
+    Description: Prefix for lambda function name
+
+Resources:
+  DynamoDBTable: 
+    Type: AWS::DynamoDB::Table
+    Properties: 
+      AttributeDefinitions: 
+        - 
+          AttributeName: "short_id"
+          AttributeType: "S"
+      KeySchema: 
+        - 
+          AttributeName: "short_id"
+          KeyType: "HASH"
+      ProvisionedThroughput: 
+        ReadCapacityUnits: "5"
+        WriteCapacityUnits: "5"
+      TableName: !Ref TableName
+  
+  ApiGatewayCloudWatchLogsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - apigateway.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: ApiGatewayLogsPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                  - logs:PutLogEvents
+                  - logs:GetLogEvents
+                  - logs:FilterLogEvents
+                Resource: "*"
+
+  IAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Tags: 
+        - Key: 'Name'
+          Value: 'lambda-dynamodb-url-shortener-role'
+        - Key: 'CreatedBy'
+          Value: !Ref CreatedBy
+        - Key: 'AccountNumber'
+          Value: !Ref AccountNumber
+        - Key: 'Service'
+          Value: !Ref Service
+        - Key: 'Environment'
+          Value: !Ref Environment
+        - Key: CreatedWith
+          Value: !Ref CreatedWith
+        - Key: 'StackName'
+          Value: !Ref AWS::StackName
+      RoleName: 'lambda-dynamodb-url-shortener-role'
+      Policies:
+      - PolicyName: 'lambda-dynamodb-url-shortener'
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: 
+                - 'dynamodb:PutItem'
+                - 'dynamodb:DeleteItem'
+                - 'dynamodb:GetItem'
+                - 'dynamodb:Query'
+                - 'dynamodb:UpdateItem'
+              Resource: !Sub 
+                - 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Table}'
+                - Table: !Ref TableName 
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+      Path: /
+      ManagedPolicyArns:
+        - !Ref AWSLambdaBasicExecutionRolePolicy
+     
+  LambdaFunctionCreate:
+    Type: AWS::Serverless::Function
+    Properties: 
+      Description: !Join
+      - '-'
+      - -  !Ref FunctionName
+        -  'create'
+        -  'function'
+      FunctionName: !Join
+      - '-'
+      - -  !Ref FunctionName
+        -  'create'
+      Handler: index.handler
+      Role: !GetAtt IAMRole.Arn
+      Runtime: !Ref Runtime
+      InlineCode: |
+        import os
+        import json
+        import boto3
+        from string import ascii_letters, digits
+        from random import choice, randint
+        from time import strftime, time
+        from urllib import parse
+
+        app_url = os.getenv('APP_URL') #The app_url will be your domain name, as this will be returned to the client with the short id
+        min_char = int(os.getenv('MIN_CHAR')) #min number of characters in short url unique string
+        max_char = int(os.getenv('MAX_CHAR')) #max number of characters in short url unique string
+        string_format = ascii_letters + digits
+
+        ddb = boto3.resource('dynamodb', region_name = 'us-west-2').Table('url-shortener-table') #Set region and Dynamo DB table
+
+        def generate_timestamp():
+            response = strftime("%Y-%m-%dT%H:%M:%S")
+            return response
+
+        def expiry_date():
+            response = int(time()) + int(604800) #generate expiration date for the url based on the timestamp
+            return response
+
+        def check_id(short_id):
+            if 'Item' in ddb.get_item(Key={'short_id': short_id}):
+                response = generate_id()
+            else:
+                return short_id
+
+        def generate_id():
+            short_id = "".join(choice(string_format) for x in range(randint(min_char, max_char))) #generate unique value for the short url
+            print(short_id)
+            response = check_id(short_id)
+            return response
+
+        def handler(event, context):
+            analytics = {}
+            print(event)
+            short_id = generate_id()
+            short_url = app_url + short_id
+            long_url = json.loads(event.get('body')).get('long_url')
+            timestamp = generate_timestamp()
+            ttl_value = expiry_date()
+
+            analytics['user_agent'] = event.get('headers').get('User-Agent')
+            analytics['source_ip'] = event.get('headers').get('X-Forwarded-For')
+            analytics['xray_trace_id'] = event.get('headers').get('X-Amzn-Trace-Id')
+
+            if len(parse.urlsplit(long_url).query) > 0:
+                url_params = dict(parse.parse_qsl(parse.urlsplit(long_url).query))
+                for k in url_params:
+                    analytics[k] = url_params[k]
+
+            #put value in dynamodb table
+            response = ddb.put_item(
+                Item={
+                    'short_id': short_id,
+                    'created_at': timestamp,
+                    'ttl': int(ttl_value),
+                    'short_url': short_url,
+                    'long_url': long_url,
+                    'analytics': analytics,
+                    'hits': int(0)
+                }
+            )
+            body_new = '{"short_id":"' +short_url+'","long_url":"'+long_url+'"}'
+            return {"statusCode": 200,"body": body_new} #return the body with long and short url
+
+      Timeout: 60
+      Environment:
+        Variables:
+          APP_URL : 'YOUR-URL/t/'
+          MIN_CHAR : 12 
+          MAX_CHAR : 16
+      Tags: 
+        Name: !Join
+        - '-'
+        - -  !Ref FunctionName
+          -  'create'
+        CreatedBy: !Ref CreatedBy
+        AccountNumber: !Ref AccountNumber
+        Service: !Ref Service
+        Environment: !Ref Environment
+        CreatedWith: !Ref CreatedWith
+        StackName: !Ref AWS::StackName
+
+  LambdaFunctionGet:
+    Type: AWS::Serverless::Function
+    Properties: 
+      Description: !Join
+      - '-'
+      - -  !Ref FunctionName
+        -  'retrieve'
+        -  'function'
+      FunctionName: !Join
+      - '-'
+      - -  !Ref FunctionName
+        -  'retrieve'
+      Handler: index.handler
+      Role: !GetAtt IAMRole.Arn
+      Runtime: !Ref Runtime
+      InlineCode: |
+        import os
+        import json
+        import boto3
+
+        ddb = boto3.resource('dynamodb', region_name = 'us-west-2').Table('url-shortener-table')
+
+        def handler(event, context):
+            short_id = event.get('short_id')
+            print(short_id)
+            print(event)
+
+            try:
+                item = ddb.get_item(Key={'short_id': short_id}) #look up the take the short id value in dynamo
+                print(item)
+                long_url = item.get('Item').get('long_url') #take the long_url value corresponding to the short id
+                print(long_url)
+                # increase the hit number on the db entry of the url (analytics?)
+                ddb.update_item(
+                    Key={'short_id': short_id},
+                    UpdateExpression='set hits = hits + :val',
+                    ExpressionAttributeValues={':val': 1}
+                )
+
+            except:
+                return {
+                    'statusCode': 301,
+                    'location': 'https://objects.ruanbekker.com/assets/images/404-blue.jpg'
+                }
+            
+            #return long_url and the redirection http status code 301
+            return {
+                "statusCode": 301,
+                "location": long_url
+            }
+
+      Timeout: 60
+      Tags: 
+        Name: !Join
+        - '-'
+        - -  !Ref FunctionName
+          -  'retrieve'
+        CreatedBy: !Ref CreatedBy
+        AccountNumber: !Ref AccountNumber
+        Service: !Ref Service
+        Environment: !Ref Environment
+        CreatedWith: !Ref CreatedWith
+        StackName: !Ref AWS::StackName
+
+  apiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Description: Example API Gateway
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      Name: !Join
+      - '-'
+      - -  !Ref FunctionName
+        -  'api'
+
+  ApiGatewayAccount:
+    Type: AWS::ApiGateway::Account
+    Properties:
+      CloudWatchRoleArn: !GetAtt ApiGatewayCloudWatchLogsRole.Arn
+
+  apiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - RequestPOST
+      - RequestGET
+      - RequestGet2
+    Properties:
+      RestApiId: !Ref apiGateway
+      StageName: test
+
+  LambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:invokeFunction
+      FunctionName: !GetAtt LambdaFunctionCreate.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${apiGateway}/*'
+
+  LambdaPermission2:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:invokeFunction
+      FunctionName: !GetAtt LambdaFunctionGet.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${apiGateway}/*'
+
+  ApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref apiGateway
+      ParentId: !GetAtt apiGateway.RootResourceId
+      PathPart: create
+
+  ApiResourceGet:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref apiGateway
+      ParentId: !GetAtt apiGateway.RootResourceId
+      PathPart: admin
+
+  ApiResourceT:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref apiGateway
+      ParentId: !GetAtt apiGateway.RootResourceId
+      PathPart: t
+  
+  ApiResourceProxy:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref apiGateway
+      ParentId: !Ref ApiResourceT
+      PathPart: '{shortid}'
+
+  RequestGET:
+    DependsOn: IAMRole
+    Type: AWS::ApiGateway::Method
+    Properties:
+      ApiKeyRequired: false
+      AuthorizationType: NONE
+      HttpMethod: GET
+      Integration:
+        Type: MOCK
+        IntegrationHttpMethod: GET
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseTemplates:
+              application/json: |
+                <!DOCTYPE html>
+                <html lang="en">
+                <head>
+                    <meta charset="utf-8">
+                    <title>Private URL shortener</title>
+                    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css">
+                    <script src="https://ajax.googleapis.com/ajax/libs/jquery/2.1.4/jquery.min.js"></script>
+                    <script type="text/javascript">
+
+                    $(document).ready(function() {
+
+                        // used only to allow local serving of files
+                        $.ajaxSetup({
+                            beforeSend: function(xhr) {
+                                if (xhr.overrideMimeType) {
+                                    xhr.overrideMimeType("application/json");
+                                }
+                            }
+                        });
+
+                        $('#url_input').focus();    // set initial focus
+
+                        $('form#submit').submit(function(event) {
+                            $('#url_input_submit').prop('disabled', true);
+
+                            // process the form
+                            $.ajax({
+                                type        : 'POST',
+                                url         : '/create',
+                                data        : JSON.stringify({ 'long_url' : $('#url_input').val(), 'cdn_prefix': window.location.hostname }),
+                                contentType : 'application/json; charset=utf-8',
+                                dataType    : 'json',
+                                encode      : true
+                            })
+                            .done(function(data,textStatus, jqXHR) {
+                                $('#url_input_submit').prop('disabled', false);
+                                if (data.error) {
+                                    $('#url-group').addClass('has-error'); // add the error class to show red input
+                                    $('#url-error').show().text(data.error); // add the actual error message under our input
+                                } else {
+                                    $('form#submit').hide();        // hide initial submit form
+                                    $('form#result').show();        // and show the one used to display the results
+                                    $('#long_url').text(data.long_url);
+                                    $('#short_id').val(data.short_id).focus().select();
+                                }
+                            })
+                            .fail(function(_, _, errorThrown) {
+                                $('#url_input_submit').prop('disabled', false);
+                                $('#url-group').addClass('has-error'); // add the error class to show red input
+                                $('#url-error').show().text("Server error: "+errorThrown); // add the actual error message under our input
+                            });
+
+                            // stop the form from submitting the normal way and refreshing the page
+                            event.preventDefault();
+                        });
+                    
+                        $('form#result').submit(function(event) {
+                            location.reload();
+                        });
+
+                    });
+                    </script>
+                </head>
+                <body>
+                <div class="col-sm-8 col-sm-offset-1">
+
+                    <h1>Private URL shortener</h1>
+                    <br/>
+                    <form id="submit">
+                        <div id="url-group" class="form-group">
+                            <input type="url" required class="form-control" name="url" placeholder="Paste here the long URL here" id="url_input">
+                            <div class="help-block" style="display: none" id="url-error"></div>
+                        </div>
+                        <button type="submit" class="btn btn-success" id="url_input_submit">Shorten</button>
+
+                    </form>
+                    <form id="result" style="display: none">
+                        <div class="alert alert-success">Successfully shortened: <br/><span id="long_url"></span></div>
+                        <div class="form-group">
+                            <label for="name">You can now copy/paste the short URL</label>
+                            <input type="text" class="form-control" name="url" readonly="readonly" id="short_id">
+                        </div><button type="submit" class="btn btn-success" id="page_reload">New URL</button><div>
+                        </div>
+                    </form>
+
+                </div>
+                </body>
+                </html>
+        PassthroughBehavior: WHEN_NO_TEMPLATES
+      ResourceId: !Ref ApiResourceGet
+      RestApiId: !Ref apiGateway
+      MethodResponses:
+        - StatusCode: 200
+
+  RequestPOST:
+    DependsOn: IAMRole
+    Type: AWS::ApiGateway::Method
+    Properties:
+      ApiKeyRequired: false
+      AuthorizationType: NONE
+      HttpMethod: POST
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaFunctionCreate.Arn}/invocations'
+        IntegrationResponses:
+          - ResponseTemplates:
+              application/json: ""
+            StatusCode: 200
+        PassthroughBehavior: WHEN_NO_TEMPLATES            
+
+      ResourceId: !Ref ApiResource
+      RestApiId: !Ref apiGateway
+      MethodResponses:
+        - StatusCode: 200
+
+  RequestGet2:
+    DependsOn: IAMRole
+    Type: AWS::ApiGateway::Method
+    Properties:
+      ApiKeyRequired: false
+      AuthorizationType: NONE
+      HttpMethod: GET
+      Integration:
+        Type: AWS
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaFunctionGet.Arn}/invocations'
+        RequestTemplates:
+              application/json: |
+                {
+                    "short_id": "$input.params('shortid')"
+                }
+        IntegrationResponses:
+          - 
+            StatusCode: 301
+            ResponseParameters:
+              method.response.header.Location: integration.response.body.location            
+        PassthroughBehavior: NEVER
+        
+      RequestParameters:
+        method.request.path.proxy: true
+      ResourceId: !Ref ApiResourceProxy
+      RestApiId: !Ref apiGateway
+      MethodResponses:
+        - StatusCode: 301
+          ResponseParameters:
+            method.response.header.Location: true
