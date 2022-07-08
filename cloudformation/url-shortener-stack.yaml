@@ -5,6 +5,7 @@ Description: >
   - DynamoDB table
   - Required IAM permissions
   - Lambda functions
+  - Resources (https://medium.com/@jeeri95/serverless-url-shortener-using-aws-97f1929c475e)
 
 
 Metadata:
