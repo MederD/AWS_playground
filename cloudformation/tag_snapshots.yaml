@@ -1,0 +1,83 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: > 
+  Create lambda functions to tag EC2 resources, create event rules to trigger these lambda functions. 
+  Author: Mederbek Dzhumabaev
+
+Parameters:
+  ---
+  ExistingLambdaRole:
+    Type: String
+    Description: 'ARN of the existing lambda role'
+  S3KeyParamSnapshot:
+    Type: String
+    Description: 'Key for Snapshots lambda function'
+  S3BucketParam:
+    Type: String
+    Description: 'Location of lambda functions' 
+  S3Prefix:
+    Type: String
+    Description: 'Prefix of S3 location'
+  Runtime:
+    Default: 'python3.9'
+    Type: String
+    Description: Runtime of the lambda function.
+  Tag1:
+    Type: String
+    Description: Enter the service name for applications.
+  
+Resources:
+  ---
+
+#SNAPSHOTS**************
+  SnapshotPutTags:
+    Type: AWS::Serverless::Function
+    Properties: 
+      Description: Function to tag Snapshots
+      FunctionName: !Select [0, !Split [".", !Ref S3KeyParamSnapshot]]
+      Handler: !Join
+      - '.'
+      - -  !Select [0, !Split [".", !Ref S3KeyParamSnapshot]]
+        -  lambda_handler
+      Role: !Ref ExistingLambdaRole
+      Runtime: !Ref Runtime
+      CodeUri:
+        Bucket: !Ref S3BucketParam
+        Key: !Join ["/", [!Ref S3Prefix, !Ref S3KeyParamSnapshot]]
+      Timeout: 60
+      Environment:
+        Variables:
+          Tag1: !Ref Tag1
+          OwnerId : !Ref AWS::AccountId
+      Tags: 
+        Name: !Select [0, !Split [".", !Ref S3KeyParamSnapshot]]
+        Tag1: !Ref Tag1
+   
+  SnapshotEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Join [ '-', ['Snapshot', !Ref EventRuleName ]]
+      Description: !Join [ "-", [ !Ref EventRuleDescribe, "Snapshot" ]]
+      EventPattern:
+        source:
+          - "aws.config"
+        detail-type:
+          - "Config Configuration Item Change"
+        detail:
+          configurationItem:
+            resourceType:
+              - "AWS::EC2::Snapshot"
+      State: "ENABLED"
+      Targets:
+        - Arn: !GetAtt SnapshotPutTags.Arn
+          Id: "SnapshotTagging"
+
+  SnapshotPermissionForEventsToInvokeLambda: 
+    Type: AWS::Lambda::Permission
+    Properties: 
+      FunctionName: 
+        Ref: "SnapshotPutTags"
+      Action: "lambda:InvokeFunction"
+      Principal: "events.amazonaws.com"
+      SourceArn: !GetAtt SnapshotEventRule.Arn
+---
