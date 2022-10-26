@@ -60,13 +60,15 @@ Resources:
       Description: !Join [ "-", [ !Ref EventRuleDescribe, "Snapshot" ]]
       EventPattern:
         source:
-          - "aws.config"
+          - "aws.ec2"
         detail-type:
-          - "Config Configuration Item Change"
+          - "AWS API Call via CloudTrail"
         detail:
-          configurationItem:
-            resourceType:
-              - "AWS::EC2::Snapshot"
+          eventSource:
+            - 'ec2.amazonaws.com'
+          eventName:
+            - 'CreateSnapshot'
+            - 'CreateSnapshots'
       State: "ENABLED"
       Targets:
         - Arn: !GetAtt SnapshotPutTags.Arn
