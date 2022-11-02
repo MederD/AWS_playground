@@ -7,7 +7,7 @@ In this case excel data looks like below:
  |Header 1 |Header 2   |Device Name|Management IP|
  |Some Data|Some Data  |Some Data  |Some Data    | 
 
-```
+```python
 # import required modules
 import pandas, boto3, logging
 import numpy, time
