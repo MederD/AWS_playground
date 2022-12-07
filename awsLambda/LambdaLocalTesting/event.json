@@ -1,0 +1,63 @@
+{
+    "id": "1c774019-555a-466c-910a-0097b8ec6a03",
+    "detail-type": "AWS API Call via CloudTrail",
+    "source": "aws.ec2",
+    "account": "123456789012",
+    "time": "2019-11-11T21:29:54Z",
+    "region": "us-east-1",
+    "resources": [""],
+    "detail": {
+      "eventVersion": "1.08",
+      "userIdentity": {
+        "type": "IAMUser",
+        "principalId": "AIDAXXXXXXXXXXXXXXX",
+        "arn": "arn:aws:iam::123456789012:user/User",
+        "accountId": "123456789012",
+        "accessKeyId": "ASIAXXXXXXXXXXXXXXXXX",
+        "userName": "User",
+        "sessionContext": {
+          "sessionIssuer": {},
+          "webIdFederationData": {},
+          "attributes": {
+            "creationDate": "2019-11-11T21:29:54Z",
+            "mfaAuthenticated": "true"
+          }
+      },
+      "eventTime": "2019-11-11T21:29:54Z",
+      "eventSource": "ec2.amazonaws.com",
+      "eventName": "RunInstances",
+      "awsRegion": "us-east-1",
+      "sourceIPAddress": "AWS Internal",
+      "userAgent": "AWS Internal",
+      "requestParameters": {
+        "instancesSet": {
+          "items": [
+            {
+              "imageId": "ami-000000000000000",
+              "minCount": 3,
+              "maxCount": 3,
+              "keyName": ""
+            }
+          ]
+      },
+      "responseElements": {
+        "instancesSet": {
+          "items": [
+            {
+              "instanceId": "i-0000000000000001",
+              "imageId": "ami-000000000000000"
+            },
+            {
+              "instanceId": "i-0000000000000002",
+              "imageId": "ami-000000000000000"
+            },
+            {
+              "instanceId": "i-0000000000000003",
+              "imageId": "ami-000000000000000"
+              
+            }
+          }
+        }
+      }
+    }
+}
