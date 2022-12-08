@@ -44,23 +44,12 @@ def handler(event, context):
         utc = datetime.strptime(eventtime, '%Y-%m-%dT%H:%M:%SZ')
         utc = utc.replace(tzinfo=from_zone)
         local = utc.astimezone(to_zone)
-        item_count = event['detail']['requestParameters']['instancesSet']['items'][0]['minCount']
-        logger.info('Count of instances: %s' % item_count )
+        
         if eventname == 'TerminateInstances' or eventname == 'RunInstances':
-            if item_count == 1:
-                instanceId = event['detail']['responseElements']['instancesSet']['items'][0]['instanceId']
-                logger.info('Constructing message for Instance: %s' % instanceId )
-                message = "Region: {0} \nEventName: {1} \nEventTime: {2} \nInstance: {3} \nSourceIP: {4} \nRequestor: {5} \nAccount: {6} \nEventSource: {7} ".format(region, eventname, local, instanceId, sourceIP, requesting, account, eventsource)
-                if IS_DEVELOPMENT:
-                    logger.info("Environment is DEVELOPMENT - testing locally")
-                else:
-                    logger.info("Environment is: PRODUCTION - sending message to SNS")
-                    response = sns.publish(
-                            TopicArn = sns_topic,
-                            Message = message
-                            )
-
-            else:
+            if 'minCount' in event['detail']['requestParameters']['instancesSet']['items'][0]:
+                item_count = event['detail']['requestParameters']['instancesSet']['items'][0]['minCount']
+                logger.info('Count of instances: %s' % item_count )
+                
                 counter = item_count - 1
                 while counter >= 0:
                     instanceId = event['detail']['responseElements']['instancesSet']['items'][counter]['instanceId']
@@ -75,9 +64,20 @@ def handler(event, context):
                                 Message = message
                                 )
                     counter = counter - 1
+            else:
+                instanceId = event['detail']['responseElements']['instancesSet']['items'][0]['instanceId']
+                logger.info('Constructing message for Instance: %s' % instanceId )
+                message = "Region: {0} \nEventName: {1} \nEventTime: {2} \nInstance: {3} \nSourceIP: {4} \nRequestor: {5} \nAccount: {6} \nEventSource: {7} ".format(region, eventname, local, instanceId, sourceIP, requesting, account, eventsource)
+                if IS_DEVELOPMENT:
+                    logger.info("Environment is DEVELOPMENT - testing locally")
+                else:
+                    logger.info("Environment is: PRODUCTION - sending message to SNS")
+                    response = sns.publish(
+                            TopicArn = sns_topic,
+                            Message = message
+                            )
         else:
             logger.info('Event is not TerminateInstances or RunInstances')
-        
           
     except Exception as error:
         logger.error("Error: {}".format(error))
