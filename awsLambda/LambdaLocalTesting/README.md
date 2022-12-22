@@ -30,8 +30,7 @@ def handler(event, context):
         utc = datetime.strptime(eventtime, '%Y-%m-%dT%H:%M:%SZ')
         utc = utc.replace(tzinfo=from_zone)
         local = utc.astimezone(to_zone)
-        item_count = event['detail']['requestParameters']['instancesSet']['items'][0]['minCount']
-        logger.info('Count of instances: %s' % item_count )
+       
         if eventname == 'TerminateInstances' or eventname == 'RunInstances':
             instance_list =  event['detail']['responseElements']['instancesSet']['items']
             for instance in instance_list:
