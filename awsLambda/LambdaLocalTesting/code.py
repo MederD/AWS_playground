@@ -1,5 +1,4 @@
 import json, boto3, traceback, logging, os
-from botocore.exceptions import ClientError
 from datetime import datetime
 from dateutil import tz
 
@@ -46,28 +45,10 @@ def handler(event, context):
         local = utc.astimezone(to_zone)
         
         if eventname == 'TerminateInstances' or eventname == 'RunInstances':
-            if 'minCount' in event['detail']['requestParameters']['instancesSet']['items'][0]:
-                item_count = event['detail']['requestParameters']['instancesSet']['items'][0]['minCount']
-                logger.info('Count of instances: %s' % item_count )
-                
-                counter = item_count - 1
-                while counter >= 0:
-                    instanceId = event['detail']['responseElements']['instancesSet']['items'][counter]['instanceId']
-                    logger.info('Constructing message for Instance: %s' % instanceId )
-                    message = "Region: {0} \nEventName: {1} \nEventTime: {2} \nInstance: {3} \nSourceIP: {4} \nRequestor: {5} \nAccount: {6} \nEventSource: {7} ".format(region, eventname, local, instanceId, sourceIP, requesting, account, eventsource)
-                    if IS_DEVELOPMENT:
-                        logger.info("Environment is DEVELOPMENT - testing locally")
-                    else:
-                        logger.info("Environment is: PRODUCTION - sending message to SNS")
-                        response = sns.publish(
-                                TopicArn = sns_topic,
-                                Message = message
-                                )
-                    counter = counter - 1
-            else:
-                instanceId = event['detail']['responseElements']['instancesSet']['items'][0]['instanceId']
-                logger.info('Constructing message for Instance: %s' % instanceId )
-                message = "Region: {0} \nEventName: {1} \nEventTime: {2} \nInstance: {3} \nSourceIP: {4} \nRequestor: {5} \nAccount: {6} \nEventSource: {7} ".format(region, eventname, local, instanceId, sourceIP, requesting, account, eventsource)
+            instance_list =  event['detail']['responseElements']['instancesSet']['items']
+            for instance in instance_list:
+                logger.info('Constructing message for Instance: %s' % instance['instanceId'] )
+                message = "Region: {0} \nEventName: {1} \nEventTime: {2} \nInstance: {3} \nSourceIP: {4} \nRequestor: {5} \nAccount: {6} \nEventSource: {7} ".format(region, eventname, local, instance['instanceId'], sourceIP, requesting, account, eventsource)
                 if IS_DEVELOPMENT:
                     logger.info("Environment is DEVELOPMENT - testing locally")
                 else:
