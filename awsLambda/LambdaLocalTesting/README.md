@@ -33,10 +33,10 @@ def handler(event, context):
         item_count = event['detail']['requestParameters']['instancesSet']['items'][0]['minCount']
         logger.info('Count of instances: %s' % item_count )
         if eventname == 'TerminateInstances' or eventname == 'RunInstances':
-            if item_count == 1:
-                instanceId = event['detail']['responseElements']['instancesSet']['items'][0]['instanceId']
-                logger.info('Constructing message for Instance: %s' % instanceId )
-                message = "Region: {0} \nEventName: {1} \nEventTime: {2} \nInstance: {3} \nSourceIP: {4} \nRequestor: {5} \nAccount: {6} \nEventSource: {7} ".format(region, eventname, local, instanceId, sourceIP, requesting, account, eventsource)
+            instance_list =  event['detail']['responseElements']['instancesSet']['items']
+            for instance in instance_list:
+                logger.info('Constructing message for Instance: %s' % instance['instanceId'] )
+                message = "Region: {0} \nEventName: {1} \nEventTime: {2} \nInstance: {3} \nSourceIP: {4} \nRequestor: {5} \nAccount: {6} \nEventSource: {7} ".format(region, eventname, local, instance['instanceId'], sourceIP, requesting, account, eventsource)
                 if IS_DEVELOPMENT:
                     logger.info("Environment is DEVELOPMENT - testing locally")
                 else:
@@ -45,6 +45,8 @@ def handler(event, context):
                             TopicArn = sns_topic,
                             Message = message
                             )
+        else:
+            logger.info('Event is not TerminateInstances or RunInstances')
 ```
 where *"region", "account", "eventname", "eventtime", "sourceIP", "requesting details"* and *"eventsource"* are loaded to function from triggering event. Then, message will be constructed and sent to SNS topic if it matches the environment.
 For environments, we need to create *"env.json"* file with our environment values for local testing. Our *"env.json"* file will look like this:
