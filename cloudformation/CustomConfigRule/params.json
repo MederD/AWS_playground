@@ -1,0 +1,18 @@
+[
+	{
+		"ParameterKey": "NameOfSolution",
+		"ParameterValue": "iam-role-last-used"
+	},
+	{
+		"ParameterKey": "MaxDaysForLastUsed",
+		"ParameterValue": "120"
+	},
+	{
+		"ParameterKey": "RolePatternWhitelist",
+		"ParameterValue": "/*service-*|/*cdk-*"
+	},
+    {
+		"ParameterKey": "LambdaLayerArn",
+		"ParameterValue": "<Lambda-Layer-Arn>"
+	}
+]
