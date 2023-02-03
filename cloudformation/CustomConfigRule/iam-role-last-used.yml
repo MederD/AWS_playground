@@ -1,0 +1,381 @@
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: "Creates an AWS Config rule and Lambda to check all roles' last used compliance"
+Transform: 'AWS::Serverless-2016-10-31'
+Parameters:
+
+  MaxDaysForLastUsed:
+    Description: Checks the number of days allowed for a role to not be used before being non-compliant
+    Type: Number
+    Default: 120
+    MaxValue: 365
+
+  NameOfSolution:
+    Type: String
+    Default: iam-role-last-used
+    Description: The name of the solution - used for naming of created resources
+
+  RolePatternWhitelist:
+    Description: Pipe separated whitelist of role pathnames using simple pathname matching
+    Type: String
+    Default: ''
+    AllowedPattern: '[-a-zA-Z0-9+=,.@_/|*]+|^$'
+
+  LambdaLayerArn:
+    Type: String
+    Description: The ARN for the Lambda Layer you will use.
+  
+Resources:
+  LambdaInvokePermission:
+    Type: 'AWS::Lambda::Permission'
+    DependsOn: CheckRoleLastUsedLambda
+    Properties: 
+      FunctionName: !GetAtt CheckRoleLastUsedLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: config.amazonaws.com
+      SourceAccount: !Ref 'AWS::AccountId'
+
+  LambdaExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: !Sub '${NameOfSolution}-${AWS::Region}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: /
+      Policies:
+      - PolicyName: !Sub '${NameOfSolution}'
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - config:PutEvaluations
+            Resource: '*'
+          - Effect: Allow
+            Action:
+            - iam:GetAccountAuthorizationDetails
+            Resource: '*'
+          - Effect: Allow
+            Action:
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource:
+            - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:*:log-group:/aws/lambda/${NameOfSolution}:log-stream:*'
+
+  CheckRoleLastUsedLambda:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Description: "Checks IAM roles' last used info for AWS Config"
+      FunctionName: !Sub '${NameOfSolution}'
+      Handler: lambda_function.evaluate_compliance
+      MemorySize: 256
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.9
+      Timeout: 300
+      CodeUri: ./iam-role-last-used
+      Layers:
+      - !Ref LambdaLayerArn
+
+  LambdaLogGroup:
+    Type: 'AWS::Logs::LogGroup'
+    Properties: 
+      LogGroupName: !Sub '/aws/lambda/${NameOfSolution}'
+      RetentionInDays: 30
+
+  ConfigCustomRule:
+    Type: 'AWS::Config::ConfigRule'
+    DependsOn:
+    - LambdaInvokePermission
+    - LambdaExecutionRole
+    Properties:
+      ConfigRuleName: !Sub '${NameOfSolution}'
+      Description: Checks the number of days that an IAM role has not been used to make a service request. If the number of days exceeds the specified threshold, it is marked as non-compliant.
+      InputParameters: !Sub '{"role_whitelist":"${RolePatternWhitelist}","max_days_for_last_used":"${MaxDaysForLastUsed}"}'
+      Source: 
+        Owner: CUSTOM_LAMBDA
+        SourceDetails: 
+        - EventSource: aws.config
+          MaximumExecutionFrequency: TwentyFour_Hours
+          MessageType: ScheduledNotification
+        SourceIdentifier: !GetAtt CheckRoleLastUsedLambda.Arn
+
+  AutomationServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - ssm.amazonaws.com
+          Action: sts:AssumeRole
+          Condition:
+            StringEquals:
+              aws:SourceAccount: !Sub ${AWS::AccountId}
+            ArnLike:
+              aws:SourceArn: !Sub arn:aws:ssm:*:${AWS::AccountId}:automation-execution/*
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AmazonSSMAutomationRole
+      Path: "/"
+      RoleName: AutomationServiceRole
+      Policies:
+      - PolicyName: "Allow-IAM"
+        PolicyDocument: 
+          Version: '2012-10-17'
+          Statement:
+            - Sid: VisualEditor0
+              Effect: Allow
+              Action:
+              - iam:ListPolicies
+              - iam:ListRoles
+              Resource: "*"
+            - Sid: VisualEditor1
+              Effect: Allow
+              Action:
+              - iam:GetRole
+              - iam:GetInstanceProfile
+              - iam:GetPolicy
+              - iam:RemoveRoleFromInstanceProfile
+              - iam:DeletePolicy
+              - iam:DeleteRole
+              - iam:ListInstanceProfiles
+              - iam:ListInstanceProfilesForRole
+              - iam:DetachRolePolicy
+              - iam:ListAttachedRolePolicies
+              - iam:DeleteRolePolicy
+              - iam:ListRolePolicies
+              - iam:GetRolePolicy
+              Resource:
+              - !Sub arn:aws:iam::${AWS::AccountId}:role/*
+              - !Sub arn:aws:iam::${AWS::AccountId}:policy/*
+              - !Sub arn:aws:iam::${AWS::AccountId}:instance-profile/*
+
+  BasicRemediationConfiguration:
+    Type: "AWS::Config::RemediationConfiguration"
+    Properties:
+        Automatic: True
+        MaximumAutomaticAttempts: 2
+        RetryAttemptSeconds: 30
+        ConfigRuleName: !Sub '${NameOfSolution}'
+        Parameters:
+            AutomationAssumeRole:
+                StaticValue:
+                    Values: 
+                        - !GetAtt AutomationServiceRole.Arn
+            IAMRoleName:
+                ResourceValue:
+                    Value: 'RESOURCE_ID'
+        TargetId: !Ref Document
+        TargetType: "SSM_DOCUMENT"
+        TargetVersion: "1"
+
+  Document:
+    Type: AWS::SSM::Document
+    Properties:
+      Name: 'ConfigRemediation-DeleteIAMRole-ByName'
+      TargetType: '/AWS::IAM:Role'
+      DocumentType: Automation
+      DocumentFormat: YAML
+      Content:
+        assumeRole: '{{ AutomationAssumeRole }}'
+        schemaVersion: '0.3'
+        description: |- 
+                      'This document deletes an AWS Identity and Access Management role (IAM role) using the [DeleteRole](https://docs.aws.amazon.com/IAM/latest/APIReference/API_DeleteRole.html) API.
+                      Note: This document does not delete the instance profile associated with the role.
+                      This document does not delete service linked roles.'
+        parameters:
+          AutomationAssumeRole:
+            type: String
+            description: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
+            default: ''
+            allowedPattern: '^arn:aws[a-z0-9-]*:iam::\d{12}:role\/[\w-\/.@+=,]{1,1017}$'
+          IAMRoleName:
+            type: String
+            description: The name of the AWS AWS IAM role to delete.
+        mainSteps:
+        - name: GetInstanceProfilesAndPolicies
+          action: 'aws:executeScript'
+          description: |-
+                      ## GetInstanceProfilesAndPolicies
+                      Gets the instance profiles and policies for the given AWS IAM role.
+                      ## outputs
+                      InstanceProfileAttachments: The instance profiles associated with the AWS IAM role.
+                      RoleManagedPolicies: The managed policies attached to the AWS IAM role.
+                      RoleInlinePolicies: The inline policies attached to the AWS IAM role.
+          isEnd: false
+          timeoutSeconds: 600
+          inputs:
+            Runtime: python3.7
+            Handler: handler
+            InputPayload:
+              RoleName: '{{ IAMRoleName }}'
+            Script: |-
+              import boto3
+              import botocore
+              from time import sleep
+              THROTTLE_PERIOD = 0.05
+
+              def get_inline_role_policies(iam_client, iam_role_name):
+                  PAGE_SIZE = 1000
+                  paginator = iam_client.get_paginator("list_role_policies")
+                  page_iterator = paginator.paginate(RoleName=iam_role_name, PaginationConfig={"PageSize": PAGE_SIZE})
+                  policies = []
+                  for page in page_iterator:
+                      policy_names = page["PolicyNames"]
+                      policies.extend(policy_names)
+                      sleep(THROTTLE_PERIOD)
+                  return policies
+
+              def get_managed_role_policies(iam_client, iam_role_name):
+                  PAGE_SIZE = 1000
+                  paginator = iam_client.get_paginator("list_attached_role_policies")
+                  page_iterator = paginator.paginate(RoleName=iam_role_name, PaginationConfig={"PageSize": PAGE_SIZE})
+                  policies = []
+                  for page in page_iterator:
+                      for policy in page["AttachedPolicies"]:
+                          policy_arn = policy["PolicyArn"]
+                          policies.append(policy_arn)
+                      sleep(THROTTLE_PERIOD)
+                  return policies
+
+              def get_instance_profile(iam_client, iam_role_name):
+                  PAGE_SIZE = 1000
+                  paginator = iam_client.get_paginator("list_instance_profiles_for_role")
+                  page_iterator = paginator.paginate(RoleName=iam_role_name, PaginationConfig={"PageSize": PAGE_SIZE})
+                  instance_profiles = []
+                  for page in page_iterator:
+                      for instance_profile in page["InstanceProfiles"]:
+                          instant_profile_name = instance_profile["InstanceProfileName"]
+                          instance_profiles.append(instant_profile_name)
+                      sleep(THROTTLE_PERIOD)
+                  return instance_profiles
+
+              def handler(event,context):
+                  iam_client = boto3.client("iam")
+                  iam_role_name = event["RoleName"]
+                  role_inline_policies = get_inline_role_policies(iam_client, iam_role_name)
+                  role_managed_policies = get_managed_role_policies(iam_client, iam_role_name)
+                  instance_profile_attachments = get_instance_profile(iam_client,iam_role_name)
+                  return {
+                      "role_inline_policies":role_inline_policies,
+                      "role_managed_policies":role_managed_policies,
+                      "instance_profile_attachments":instance_profile_attachments
+                  }
+          outputs:
+            - Name: RoleInlinePolicies
+              Selector: $.Payload.role_inline_policies
+              Type: StringList
+            - Name: RoleManagedPolicies
+              Selector: $.Payload.role_managed_policies
+              Type: StringList
+            - Name: InstanceProfileAttachments
+              Selector: $.Payload.instance_profile_attachments
+              Type: StringList
+
+        - name: DeleteInstanceProfilesAndPolicies
+          action: 'aws:executeScript'
+          description: |-
+            ## DeleteInstanceProfilesAndPolicies
+            Deletes the instance profiles and policies for the given AWS IAM role.
+          isEnd: false
+          timeoutSeconds: 600
+          inputs:
+            Runtime: python3.7
+            Handler: handler
+            InputPayload:
+              RoleName: '{{ IAMRoleName }}'
+              InstanceProfileAttachments: '{{ GetInstanceProfilesAndPolicies.InstanceProfileAttachments }}'
+              RoleManagedPolicies: '{{ GetInstanceProfilesAndPolicies.RoleManagedPolicies }}'
+              RoleInlinePolicies: '{{ GetInstanceProfilesAndPolicies.RoleInlinePolicies }}'
+            Script: |-
+              import boto3
+              import botocore
+              from time import sleep
+              THROTTLE_PERIOD = 0.05
+
+              def delete_inline_role_policies(iam_client, iam_role_name, role_inline_policies):
+                  responses = []
+                  for policy in role_inline_policies:
+                      response = iam_client.delete_role_policy(RoleName=iam_role_name, PolicyName=policy)
+                      responses.append(response)
+                  return responses
+
+              def detach_managed_role_policies(iam_client, iam_role_name, role_managed_policies):
+                  responses = []
+                  for policy in role_managed_policies:
+                      response = iam_client.detach_role_policy(RoleName=iam_role_name, PolicyArn=policy)
+                      responses.append(response)
+                  return responses
+
+              def detach_instance_profile (iam_client,iam_role_name, instance_profile_attachments):
+                  responses = []
+                  for instantProfileName in instance_profile_attachments:
+                      response = iam_client.remove_role_from_instance_profile(RoleName=iam_role_name, InstanceProfileName=instantProfileName)
+                      responses.append(response)
+                  return responses
+
+              def handler(event,context):
+                  iam_client = boto3.client("iam")
+                  iam_role_name = event["RoleName"]
+                  role_inline_policies = event["RoleInlinePolicies"]
+                  role_managed_policies = event["RoleManagedPolicies"]
+                  instance_profile_attachments = event["InstanceProfileAttachments"]
+                  delete_inline_role_policies(iam_client, iam_role_name, role_inline_policies)
+                  detach_managed_role_policies(iam_client,iam_role_name,role_managed_policies)
+                  detach_instance_profile(iam_client,iam_role_name, instance_profile_attachments)
+        - name: DeleteIAMRoleAndVerify
+          action: 'aws:executeScript'
+          description: |-
+            ## DeleteIAMRoleAndVerify
+            Deletes the given AWS IAM role using DeleteRole API and verifies its deletion.      
+            ## outputs
+            Output: The standard HTTP response from the DeleteRole API.
+          isEnd: true
+          timeoutSeconds: 600
+          inputs:
+            Runtime: python3.7
+            Handler: handler
+            InputPayload:
+              RoleName: '{{ IAMRoleName }}'
+            Script: |-
+              import boto3
+              import botocore
+              from time import sleep
+
+              THROTTLE_PERIOD = 0.05
+
+              def delete_iam_role(iam_client,iam_role_name):
+                  response = iam_client.delete_role(RoleName=iam_role_name)
+                  return response
+                  
+              def verify_iam_role_deletion(iam_client,iam_role_name):
+                  try:
+                      iam_client.get_role(RoleName=iam_role_name)
+                      error_message = f"VERIFICATION FAILED. IAM ROLE NAME {iam_role_name} NOT DELETED."
+                      raise Exception(error_message)
+                  except iam_client.exceptions.NoSuchEntityException:
+                      return "Verification of 'DeleteIamRole' is successful."
+
+              def handler(event,context):
+                  iam_client = boto3.client("iam")
+                  iam_role_name = event["RoleName"]
+                  response = delete_iam_role(iam_client, iam_role_name)
+                  output = verify_iam_role_deletion(iam_client, iam_role_name)
+                  return {
+                      "output":{
+                          "Message":output,
+                          "HTTPResponse": response
+                      }
+                  }
+          outputs:
+            - Name: Output
+              Selector: $.Payload.output
+              Type: StringMap
+  
