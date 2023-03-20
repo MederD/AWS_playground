@@ -258,20 +258,11 @@ Resources:
         from botocore.exceptions import ClientError
         from pprint import pprint
 
-        thelogcounts = { 'INFO': 1, 'ERROR': 1, 'DEBUG': 1}
-
-        class ContextFilter(logging.Filter):
-            def filter(self, record):
-                global thelogcounts
-                record.count = thelogcounts[record.levelname]
-                thelogcounts[record.levelname] += 1
-                return True
-
-        logging.basicConfig(level=logging.INFO, 
-            format='%(levelname)s: %(count)s: %(message)s')
-
-        logger = logging.getLogger(__name__)
-        logger.addFilter(ContextFilter())
+        logger = logging.getLogger()
+        logging.basicConfig(
+            format="[%(asctime)s] %(levelname)s [%(module)s.%(funcName)s:%(lineno)d] %(message)s", datefmt="%H:%M:%S"
+        )
+        logger.setLevel(os.getenv('log_level', logging.INFO))
 
         client = boto3.client('logs')
 
@@ -284,26 +275,34 @@ Resources:
                     response = client.describe_log_groups( nextToken = response[ 'nextToken' ] )
                     results.extend( response[ 'logGroups' ] )
                 for i in results:
-                    logs.append( i[ 'logGroupName' ] )
+                    if 'retentionInDays' in i and i['retentionInDays'] > 180:
+                        logs.append( i[ 'logGroupName' ] )
+                    if 'retentionInDays' not in i:
+                        logs.append( i[ 'logGroupName' ] )
                 logger.info( 'Total log count: %s' % len(logs) )
-                print( 'Total log count: %s' % len(logs) )
-                for log in logs:
-                    if re.search( "lambda|glue|codebuild|rds|ecs|sns|chatbot", log ):
-                        logger.info( 'Logs-30days: %s' % log ) 
-                        response = client.put_retention_policy(
-                            logGroupName = log,
-                            retentionInDays = 30
-                        )
-                        logger.info( 'Log status-30days %s' % response['ResponseMetadata']['HTTPStatusCode'] )
-                        print( 'HTTPStatusCode:', response['ResponseMetadata']['HTTPStatusCode'] )
-                    else:
-                        logger.info( 'Logs-90days %s' % log ) 
-                        response = client.put_retention_policy(
-                            logGroupName = log,
-                            retentionInDays = 90
-                        )
-                        logger.info( 'Log status-90days %s' % response['ResponseMetadata']['HTTPStatusCode'] ) 
-                        print( 'HTTPStatusCode:', response['ResponseMetadata']['HTTPStatusCode'] )
+                try:
+                  if not logs:
+                      logger.info('No logs with retention days more than 180. End of function')
+                  else:
+                      for log in logs:
+                          if re.search( "lambda|glue|codebuild|rds|ecs|sns|chatbot", log ):
+                              logger.info( 'Logs-30days: %s' % log ) 
+                              response = client.put_retention_policy(
+                                  logGroupName = log,
+                                  retentionInDays = 30
+                              )
+                              logger.info( 'Log status - {} days for log {}, status {} '.format(30, log, response['ResponseMetadata']['HTTPStatusCode'] ))
+                            
+                          else:
+                              logger.info( 'Logs-90days %s' % log ) 
+                              response = client.put_retention_policy(
+                                  logGroupName = log,
+                                  retentionInDays = 90
+                              )
+                              logger.info( 'Log status - {} days for log {}, status {} '.format(90, log, response['ResponseMetadata']['HTTPStatusCode'] ))
+                except Exception:
+                  logger.exception("Error!")
+                  raise
             except Exception:
                 logger.exception("Error!")
                 raise
