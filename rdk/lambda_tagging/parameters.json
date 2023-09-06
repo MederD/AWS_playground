@@ -1,0 +1,34 @@
+{
+  "Version": "1.0",
+  "Parameters": {
+    "RuleName": "rdk-required-tags-lambda",
+    "Description": "rdk-required-tags-lambda",
+    "SourceRuntime": "python3.9",
+    "CodeKey": "lambda_tagging.zip",
+    "InputParameters": "{\"Name\": \"*\", \"AccountNumber\": \"*\", \"Service\": \"*\", \"Environment\": \"*\", \"CreatedBy\": \"*\"}",
+    "OptionalParameters": "{}",
+    "SourceEvents": "AWS::Lambda::Function"
+  },
+  "Tags" : [
+    {
+       "Key" : "Name",
+       "Value" : "lambda_tagging"
+    },
+    {
+       "Key" : "Service",
+       "Value" : "TaggingPolicy"
+    },
+    {
+       "Key" : "Environment",
+       "Value" : "Prod"
+    },
+    {
+       "Key" : "CreatedBy",
+       "Value" : "*"
+    },
+    {
+       "Key" : "AccountNumber",
+       "Value" : "*"
+    }
+ ]
+}
