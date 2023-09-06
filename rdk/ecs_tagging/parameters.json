@@ -1,0 +1,34 @@
+{
+  "Version": "1.0",
+  "Parameters": {
+    "RuleName": "ecs_tagging",
+    "Description": "ecs_tagging",
+    "SourceRuntime": "python3.9",
+    "CodeKey": "ecs_tagging.zip",
+    "InputParameters": "{\"Name\": \"*\", \"Service\": \"*\", \"Environment\": \"*\", \"AccountNumber\": \"*\", \"CreatedBy\": \"*\"}",
+    "OptionalParameters": "{}",
+    "SourceEvents": "AWS::ECS::Cluster,AWS::ECS::TaskDefinition"
+  },
+  "Tags" : [
+    {
+       "Key" : "Name",
+       "Value" : "ecs_tagging"
+    },
+    {
+       "Key" : "Service",
+       "Value" : "TaggingPolicy"
+    },
+    {
+       "Key" : "Environment",
+       "Value" : "Dev"
+    },
+    {
+       "Key" : "CreatedBy",
+       "Value" : "*"
+    },
+    {
+       "Key" : "AccountNumber",
+       "Value" : "*"
+    }
+ ]
+}
