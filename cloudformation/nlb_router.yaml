@@ -1,0 +1,335 @@
+# inspired by https://aws.amazon.com/blogs/database/how-to-use-amazon-rds-and-amazon-aurora-with-a-static-ip-address/
+
+
+Parameters:
+  SSHKeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Choose a SSH key for the instances
+
+  LatestAmazonLinux2AMIId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: "/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2"
+
+  MyVpc:
+    Type: String
+
+  CorporateIpAddress:
+    Type: String
+
+  DomoPrefixId:
+    Type: String
+
+  PublicSubnetAz1:
+    Type: String
+
+  PublicSubnetAz2:
+    Type: String
+
+  VPCCidr:
+    Type: String
+
+  RDSEndpoint:
+    Type: String
+
+Resources:
+################# RDS Router EC2 Config. Section. #################
+  ## RDS Router EC2 Security Group
+  RdsRouterVmSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: "RdsRouterVmSecurityGroup"
+      GroupDescription: "RdsRouterVmSecurityGroup"
+      VpcId: !Ref MyVpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp  ## ssh
+          FromPort: 22
+          ToPort: 22
+          SourcePrefixListId: !Ref CorporateIpAddress
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: !Ref VPCCidr
+        - IpProtocol: tcp
+          FromPort: 15000
+          ToPort: 15000
+          CidrIp: !Ref VPCCidr
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  ## RdsRouter EC2 config.
+  RdsRouterVmAz1:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmazonLinux2AMIId
+      InstanceType: t3.large
+      SubnetId: !Ref PublicSubnetAz1
+      KeyName: !Ref SSHKeyName
+      SecurityGroupIds:
+      - !Ref RdsRouterVmSecurityGroup
+      SourceDestCheck: false
+      BlockDeviceMappings:
+      - DeviceName: /dev/sda1
+        Ebs:
+          VolumeSize: 50
+          VolumeType: gp3
+          Encrypted: true
+      Tags:
+      - Key: Name
+        Value: "RdsRouterVmAz1"
+      UserData:
+        Fn::Base64: !Sub |
+            #!/bin/bash -xe
+            set -x
+            exec > >(tee /var/log/user-data.log|logger -t user-data ) 2>&1
+            yum update -y
+            yum install nc -y
+            yum install go -y
+            yum install iptables-services -y
+            systemctl enable iptables
+            # install go and setup go env.
+            cd ~
+            cat <<EOF > /root/dummyport.go
+            package main
+            
+            import (
+                "fmt"
+                "net/http"
+            )
+            
+            func main() {
+                http.HandleFunc("/", HelloServer)
+                http.ListenAndServe(":15000", nil)
+            }
+            
+            func HelloServer(w http.ResponseWriter, r *http.Request) {
+                fmt.Fprintf(w, "Hello Server $(hostname), %s!", r.URL.Path[1:])
+            }
+            EOF
+            mkdir ~/go
+            export GOPATH=~/go
+            export GOCACHE=/root/.cache/go-build
+            echo "export GOPATH=~/go" >> ~/.bash_profile
+            echo "export GOCACHE=~/.cache/go-build" >> ~/.bash_profile
+            nohup go run /root/dummyport.go &
+            cat << 'EOF' > /root/dummygo-check.sh
+            #!/bin/bash
+            date
+            ps -ef | grep dummyport | grep -v grep
+            DUMMYPORT_PROCESS_COUNT=`ps -ef | grep dummyport | grep -v grep | wc -l`
+            echo "The number of dummyport process: " $DUMMYPORT_PROCESS_COUNT
+            
+            if [ `expr $DUMMYPORT_PROCESS_COUNT + 0` -gt 0 ]
+            then
+              echo "Exiting."
+              exit 0
+            else
+              echo "Run dummyport.go process."
+              nohup go run /root/dummyport.go &
+            fi
+            EOF
+            sysctl -w net.ipv4.ip_forward=1
+            echo "net.ipv4.ip_forward = 1" > /etc/sysctl.d/nat.conf
+            sysctl net.ipv4.ip_forward
+            RDS_CONNECTION_IP=`nslookup ${RDSEndpoint} | egrep "^Address" | grep -v "#53" | awk '{print $2}'`
+            iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 3306 -j DNAT --to $RDS_CONNECTION_IP:3306
+            iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+            service iptables save
+            # crontab
+            cat << 'EOF' > /root/rds_iptables_update.sh
+            #!/bin/bash
+            date
+            for i in {1..5}
+            do
+              RDS_CONNECTION_IP=`nslookup ${RDSEndpoint} | egrep "^Address" | grep -v "#53" | awk '{print $2}'`
+              #echo "## Current RDS_CONNECTION_IP : " $RDS_CONNECTION_IP
+              set -x
+              /sbin/iptables -t nat -R PREROUTING 1 -i eth0 -p tcp --dport 3306 -j DNAT --to $RDS_CONNECTION_IP:3306
+              set +x
+              sleep 10
+            done
+            EOF
+            cat << 'EOF' > crontab_joblists.txt
+            * * * * * sh /root/dummygo-check.sh 2>&1 | tee -a /root/dummygo-check.sh.log
+            * * * * * sh /root/rds_iptables_update.sh 2>&1 | tee -a /root/rds_iptables_update.sh.log
+            EOF
+            crontab crontab_joblists.txt
+
+  RdsRouterVmAz2:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmazonLinux2AMIId
+      InstanceType: t3.large
+      SubnetId: !Ref PublicSubnetAz2
+      KeyName: !Ref SSHKeyName
+      SecurityGroupIds:
+      - !Ref RdsRouterVmSecurityGroup
+      SourceDestCheck: false
+      BlockDeviceMappings:
+      - DeviceName: /dev/sda1
+        Ebs:
+          VolumeSize: 50
+          VolumeType: gp3
+          Encrypted: true
+      Tags:
+      - Key: Name
+        Value: "RdsRouterVmAz2"
+      UserData:
+        Fn::Base64: !Sub |
+            #!/bin/bash -xe
+            set -x
+            exec > >(tee /var/log/user-data.log|logger -t user-data ) 2>&1
+            yum update -y
+            yum install nc -y
+            yum install go -y
+            yum install iptables-services -y
+            systemctl enable iptables
+            # install go and setup go env.
+            cd ~
+            cat <<EOF > /root/dummyport.go
+            package main
+            
+            import (
+                "fmt"
+                "net/http"
+            )
+            
+            func main() {
+                http.HandleFunc("/", HelloServer)
+                http.ListenAndServe(":15000", nil)
+            }
+            
+            func HelloServer(w http.ResponseWriter, r *http.Request) {
+                fmt.Fprintf(w, "Hello Server $(hostname), %s!", r.URL.Path[1:])
+            }
+            EOF
+            mkdir ~/go
+            export GOPATH=~/go
+            export GOCACHE=/root/.cache/go-build
+            echo "export GOPATH=~/go" >> ~/.bash_profile
+            echo "export GOCACHE=~/.cache/go-build" >> ~/.bash_profile
+            nohup go run /root/dummyport.go &
+            cat << 'EOF' > /root/dummygo-check.sh
+            #!/bin/bash
+            date
+            ps -ef | grep dummyport | grep -v grep
+            DUMMYPORT_PROCESS_COUNT=`ps -ef | grep dummyport | grep -v grep | wc -l`
+            echo "The number of dummyport process: " $DUMMYPORT_PROCESS_COUNT
+            
+            if [ `expr $DUMMYPORT_PROCESS_COUNT + 0` -gt 0 ]
+            then
+              echo "Exiting."
+              exit 0
+            else
+              echo "Run dummyport.go process."
+              nohup go run /root/dummyport.go &
+            fi
+            EOF
+            sysctl -w net.ipv4.ip_forward=1
+            echo "net.ipv4.ip_forward = 1" > /etc/sysctl.d/nat.conf
+            sysctl net.ipv4.ip_forward
+            RDS_CONNECTION_IP=`nslookup ${RDSEndpoint} | egrep "^Address" | grep -v "#53" | awk '{print $2}'`
+            iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 3306 -j DNAT --to $RDS_CONNECTION_IP:3306
+            iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+            service iptables save
+            # crontab
+            cat << 'EOF' > /root/rds_iptables_update.sh
+            #!/bin/bash
+            date
+            for i in {1..5}
+            do
+              RDS_CONNECTION_IP=`nslookup ${RDSEndpoint} | egrep "^Address" | grep -v "#53" | awk '{print $2}'`
+              #echo "## Current RDS_CONNECTION_IP : " $RDS_CONNECTION_IP
+              set -x
+              /sbin/iptables -t nat -R PREROUTING 1 -i eth0 -p tcp --dport 3306 -j DNAT --to $RDS_CONNECTION_IP:3306
+              set +x
+              sleep 10
+            done
+            EOF
+            cat << 'EOF' > crontab_joblists.txt
+            * * * * * sh /root/dummygo-check.sh 2>&1 | tee -a /root/dummygo-check.sh.log
+            * * * * * sh /root/rds_iptables_update.sh 2>&1 | tee -a /root/rds_iptables_update.sh.log
+            EOF
+            crontab crontab_joblists.txt
+
+  NlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: "NlbSecurityGroup"
+      GroupDescription: "NlbSecurityGroup"
+      VpcId: !Ref MyVpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourcePrefixListId: !Ref DomoPrefixId
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  ## NLB
+  NlbForRdsRouterVm:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties: 
+      IpAddressType: ipv4
+      LoadBalancerAttributes: 
+        - Key: load_balancing.cross_zone.enabled
+          Value: false
+      Name: "NlbForRdsRouterVm"
+      SecurityGroups:
+        - !Ref NlbSecurityGroup
+      Scheme: internet-facing
+      SubnetMappings: 
+        - SubnetId: !Ref PublicSubnetAz1
+        - SubnetId: !Ref PublicSubnetAz2
+      Tags: 
+        - Key: Name
+          Value: "NlbForRdsRouterVm"
+      Type: network
+
+  ## NLB TG
+  TgForNlbForRdsRouterVm:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties: 
+      HealthCheckIntervalSeconds: 10
+      HealthCheckPort: 15000
+      HealthCheckProtocol: TCP
+      HealthyThresholdCount: 2
+      Name: "TgForNlbForRdsRouterVm"
+      Port: 3306
+      Protocol: TCP
+      Tags: 
+        - Key: Name
+          Value: "TgForNlbForRdsRouterVm"
+      TargetGroupAttributes: 
+        - Key: preserve_client_ip.enabled
+          Value: true
+      Targets: 
+        - Id: !Ref RdsRouterVmAz1
+          Port: 3306
+        - Id: !Ref RdsRouterVmAz2
+          Port: 3306
+      TargetType: instance
+      UnhealthyThresholdCount: 2
+      VpcId: !Ref MyVpc
+
+  ## NLB Listener
+  ListenerForRdsRouterVm:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties: 
+      DefaultActions: 
+        - TargetGroupArn: !Ref TgForNlbForRdsRouterVm
+          Type: forward
+      LoadBalancerArn: !Ref NlbForRdsRouterVm
+      Port: 3306
+      Protocol: TCP
+################# Output Sections ###############
+Outputs:
+  RdsRouterVmAz1:
+    Value: !Sub "ssh -A ec2-user@${RdsRouterVmAz1.PublicIp} ## RdsRouterVmAz1 ${RdsRouterVmAz1.PrivateIp}"
+
+  RdsRouterVmAz2:
+    Value: !Sub "ssh -A ec2-user@${RdsRouterVmAz2.PublicIp} ## RdsRouterVmAz2 ${RdsRouterVmAz2.PrivateIp}"
+
+  NlbForRdsRouterVm:
+    Value: !Sub "export NLB_DNS=${NlbForRdsRouterVm.DNSName}"
