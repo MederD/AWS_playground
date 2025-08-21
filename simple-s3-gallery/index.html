@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Bulk Image Uploader</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 900px;
+      margin: 20px auto;
+      padding: 10px;
+    }
+    #result {
+      margin-top: 20px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .imageCard {
+      border: 1px solid #ccc;
+      padding: 5px;
+      width: 150px;
+      text-align: center;
+    }
+    .imageCard img {
+      max-width: 100%;
+      height: auto;
+    }
+    label, input {
+      display: block;
+      margin-bottom: 10px;
+      padding: 10px;
+      width: 60%;
+      font-size: 1rem;
+    }
+    #uploadBtn {
+      padding: 10px 15px;
+      margin-left: 10px;
+      border-radius: 5px;
+      border: none;
+      background-color: #007BFF;
+      color: white;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    nav.navigation {
+      padding: 10px;
+      background: #f0f0f0;
+      border-bottom: 1px solid #ccc;
+      text-align: center;
+    }
+    nav.navigation button {
+      margin: 0 5px;
+      padding: 8px 16px;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    #uploadContainer {
+      margin-bottom: 20px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <nav class="navigation">
+    <button onclick="window.location.href='search.html'">Search</button>
+  </nav>
+  <h1>Bulk Image Uploader</h1>
+  <div id="uploadContainer">
+    <label for="folderInput">Optional folder prefix</label>
+    <input type="text" id="folderInput" placeholder="Enter folder prefix (optional)" />
+    <input type="file" id="fileInput" accept="image/*" multiple />
+    <button id="uploadBtn" onclick="uploadFiles()">Upload</button>
+  </div>
+
+  <div id="result"></div>
+
+  <script>
+    const domain = 'YOUR_DOMAIN_NAME';
+    let remoteMetadata = [];
+
+    async function loadMetadata() {
+      try {
+        const response = await fetch(`https://${domain}/database.json`);
+        if (response.ok) {
+          remoteMetadata = await response.json();
+          localStorage.setItem('database', JSON.stringify(remoteMetadata));
+        } else {
+          remoteMetadata = [];
+          localStorage.setItem('database', JSON.stringify([]));
+        }
+      } catch {
+        remoteMetadata = [];
+        localStorage.setItem('database', JSON.stringify([]));
+      }
+    }
+
+    async function uploadSingleFile(file, folder) {
+      const prefix = folder && folder.trim() !== '' ? `${folder.trim()}/` : '';
+      const uploadUrl = `https://${domain}/${prefix}${file.name}`;
+
+      const res = await fetch(uploadUrl, {
+        method: 'PUT',
+        headers: { "Content-Type": file.type },
+        body: file,
+      });
+
+      if (!res.ok) throw new Error(`Failed to upload ${file.name}`);
+      return uploadUrl;
+    }
+
+    async function uploadMetadataJson(metadata, folder) {
+      const url = `https://${domain}/database.json`;
+      const blob = new Blob([JSON.stringify(metadata, null, 2)], { type: 'application/json' });
+
+      const res = await fetch(url, {
+        method: 'PUT',
+        headers: { "Content-Type": "application/json" },
+        body: blob,
+      });
+
+      if (!res.ok) throw new Error('Failed to upload metadata JSON');
+    }
+
+    async function uploadFiles() {
+      const files = document.getElementById('fileInput').files;
+      const folder = document.getElementById('folderInput').value;
+
+      if (files.length === 0) {
+        alert('Please select image files to upload');
+        return;
+      }
+
+      try {
+        // Load latest metadata from localStorage or from remote as fallback
+        let uploadedImages = JSON.parse(localStorage.getItem('database')) || remoteMetadata;
+
+        const resultDiv = document.getElementById('result');
+        resultDiv.innerHTML = '';
+
+        for (const file of files) {
+          const url = await uploadSingleFile(file, folder);
+
+          // Adjust stored URL if folder prefix was used
+          const metaUrl = folder && folder.trim() !== '' ? url : url;
+
+          const meta = { name: file.name, url: metaUrl };
+
+          // Replace entry with same name or append
+          const exists = uploadedImages.findIndex(i => i.name === file.name);
+          if (exists >= 0) {
+            uploadedImages[exists] = meta;
+          } else {
+            uploadedImages.push(meta);
+          }
+
+          // Display image preview
+          const card = document.createElement('div');
+          card.className = 'imageCard';
+          card.innerHTML = `
+                        <p>Uploaded: <a href="${metaUrl}" target="_blank">${metaUrl}</a></p>
+                        <img src="${metaUrl}" alt="${file.name}" style="max-width: 200px; max-height: 200px;" />
+                    `;
+          resultDiv.appendChild(card);
+        }
+
+        // Save merged metadata back locally and remotely
+        localStorage.setItem('database', JSON.stringify(uploadedImages));
+        await uploadMetadataJson(uploadedImages, folder);
+
+        alert('Upload and metadata sync complete.');
+      } catch (error) {
+        console.error('Upload error:', error);
+        alert('Error during upload or metadata sync: ' + error.message);
+      }
+    }
+
+    window.onload = loadMetadata;
+  </script>
+</body>
+</html>
