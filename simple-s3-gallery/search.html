@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Image Search</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 900px;
+      margin: 20px auto;
+      padding: 10px;
+    }
+    #searchContainer {
+      margin-bottom: 20px;
+      text-align: center;
+    }
+    #searchInput {
+      padding: 10px;
+      width: 60%;
+      font-size: 1rem;
+      border-radius: 5px;
+      border: 1px solid #ccc;
+    }
+    #searchBtn {
+      padding: 10px 15px;
+      margin-left: 10px;
+      border-radius: 5px;
+      border: none;
+      background-color: #007BFF;
+      color: white;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    #results {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 15px;
+      justify-content: center;
+      margin-top: 30px;
+    }
+    .imageCard {
+      border: 1px solid #ddd;
+      padding: 10px;
+      width: 150px;
+      text-align: center;
+      border-radius: 6px;
+    }
+    .imageCard img {
+      width: 100%;
+      border-radius: 4px;
+    }
+    .imageName {
+      margin-top: 8px;
+      font-size: 0.9rem;
+      color: #333;
+      word-break: break-word;
+    }
+    nav.navigation {
+      padding: 10px;
+      background: #f0f0f0;
+      border-bottom: 1px solid #ccc;
+      text-align: center;
+    }
+    nav.navigation button {
+      margin: 0 5px;
+      padding: 8px 16px;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <nav class="navigation">
+    <button onclick="window.location.href='index.html'">Upload</button>
+  </nav>
+  <h1>Image Search</h1>
+  <div id="searchContainer">
+    <input type="text" id="searchInput" placeholder="Enter image name to search..." />
+    <button id="searchBtn">Search</button>
+  </div>
+  <div id="results"></div>
+
+  <script>
+    const metadataUrl = 'YOUR_DOMAIN_NAME/database.json';
+    let searchMetadata = [];
+
+    // Load metadata from S3 and cache in sessionStorage
+    async function loadMetadata() {
+      try {
+        const response = await fetch(metadataUrl);
+        if (!response.ok) throw new Error('Failed to load metadata');
+        searchMetadata = await response.json();
+        sessionStorage.setItem('database', JSON.stringify(searchMetadata));
+      } catch (err) {
+        console.error(err);
+        const cached = sessionStorage.getItem('database');
+        if (cached) {
+          searchMetadata = JSON.parse(cached);
+        } else {
+          searchMetadata = [];
+        }
+      }
+    }
+
+    // Simple search filter by image name (case-insensitive)
+    function searchImages(query) {
+      if (!query) {
+        displayResults([]);
+        return;
+      }
+      query = query.toLowerCase();
+      const results = searchMetadata.filter(img => img.name.toLowerCase().includes(query));
+      displayResults(results);
+    }
+
+    // Display found images with name and thumbnail
+    function displayResults(results) {
+      const container = document.getElementById('results');
+      container.innerHTML = '';
+      if (results.length === 0) {
+        container.textContent = 'No images found';
+        return;
+      }
+      results.forEach(({ name, url }) => {
+        const urlObj = new URL(url);
+
+        // Decode first in case it's double encoded, then encode each segment once
+        // This avoids %2520 (double encoded) turning into invalid URLs
+        const decodedPath = decodeURIComponent(urlObj.pathname);
+        const encodedPath = decodedPath.split('/')
+          .map(segment => encodeURIComponent(segment))
+          .join('/');
+
+        urlObj.pathname = encodedPath;
+
+        const el = document.createElement('div');
+        el.className = 'imageCard';
+        el.innerHTML = `
+          <a href="${urlObj.toString()}" target="_blank" rel="noopener noreferrer">
+            <img src="${urlObj.toString()}" alt="${name}" />
+          </a>
+          <div class="imageName">${name}</div>
+        `;
+        container.appendChild(el);
+      });
+    }
+
+    window.onload = loadMetadata;
+    document.getElementById('searchBtn').addEventListener('click', () => {
+      const query = document.getElementById('searchInput').value;
+      searchImages(query);
+    });
+  </script>
+</body>
+</html>
