@@ -112,15 +112,14 @@
 
     async function uploadMetadataJson(metadata, folder) {
       const url = `https://${domain}/database.json`;
-      const blob = new Blob([JSON.stringify(metadata, null, 2)], { type: 'application/json' });
 
       const res = await fetch(url, {
         method: 'PUT',
         headers: { "Content-Type": "application/json" },
-        body: blob,
+        body: JSON.stringify(metadata),
       });
 
-      if (!res.ok) throw new Error('Failed to upload metadata JSON');
+      if (!res.ok) throw new Error(`Failed to upload database.json: ${res.status}`);
     }
 
     async function uploadFiles() {
@@ -145,7 +144,7 @@
           // Adjust stored URL if folder prefix was used
           const metaUrl = folder && folder.trim() !== '' ? url : url;
 
-          const meta = { name: file.name, url: metaUrl };
+          const meta = { name: file.name, url: metaUrl, uploadDate: new Date().toISOString() };
 
           // Replace entry with same name or append
           const exists = uploadedImages.findIndex(i => i.name === file.name);
@@ -165,11 +164,16 @@
           resultDiv.appendChild(card);
         }
 
-        // Save merged metadata back locally and remotely
+        // Save merged metadata back locally and attempt remote sync
         localStorage.setItem('database', JSON.stringify(uploadedImages));
-        await uploadMetadataJson(uploadedImages, folder);
-
-        alert('Upload and metadata sync complete.');
+        
+        try {
+          await uploadMetadataJson(uploadedImages, folder);
+          alert('Upload and metadata sync complete.');
+        } catch (metaError) {
+          console.warn('Metadata sync failed:', metaError);
+          alert(`Images uploaded! Metadata sync failed: ${metaError.message}`);
+        }
       } catch (error) {
         console.error('Upload error:', error);
         alert('Error during upload or metadata sync: ' + error.message);
