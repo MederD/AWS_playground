@@ -1,0 +1,10 @@
+[
+  {
+    "name": "01.jpg",
+    "url": "YOUR_DOMAIN_NAME/01.jpg"
+  },
+  {
+    "name": "02.jpg",
+    "url": "YOUR_DOMAIN_NAME/prefix/02.jpg"
+  }
+]
